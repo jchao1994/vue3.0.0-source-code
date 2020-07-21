@@ -433,12 +433,12 @@ export function setupComponent(
   isInSSRComponentSetup = isSSR
 
   const { props, children, shapeFlag } = instance.vnode
-  const isStateful = shapeFlag & ShapeFlags.STATEFUL_COMPONENT
-  initProps(instance, props, isStateful, isSSR)
-  initSlots(instance, children)
+  const isStateful = shapeFlag & ShapeFlags.STATEFUL_COMPONENT // 组件vnode
+  initProps(instance, props, isStateful, isSSR) // 初始化props和attrs
+  initSlots(instance, children) // 初始化slots
 
   const setupResult = isStateful
-    ? setupStatefulComponent(instance, isSSR)
+    ? setupStatefulComponent(instance, isSSR) // 调用setup()方法，得到setupResult
     : undefined
   isInSSRComponentSetup = false
   return setupResult
@@ -477,22 +477,26 @@ function setupStatefulComponent(
   }
   // 2. call setup()
   const { setup } = Component
-  if (setup) {
+  if (setup) { // Vue3 setup语法
+    // setupContext = { attrs: instance.attrs, slots: instance.slots,emit: instance.emit }
     const setupContext = (instance.setupContext =
       setup.length > 1 ? createSetupContext(instance) : null)
 
     currentInstance = instance
+    // 暂停Track
     pauseTracking()
+    // 执行setup()，过程中不进行track依赖收集
     const setupResult = callWithErrorHandling(
       setup,
       instance,
       ErrorCodes.SETUP_FUNCTION,
       [__DEV__ ? shallowReadonly(instance.props) : instance.props, setupContext]
     )
+    // 重置Track
     resetTracking()
     currentInstance = null
 
-    if (isPromise(setupResult)) {
+    if (isPromise(setupResult)) { // setupResult为promise，就放入instance.asyncDep
       if (isSSR) {
         // return the promise so server-renderer can wait on it
         return setupResult.then((resolvedResult: unknown) => {
@@ -508,24 +512,24 @@ function setupStatefulComponent(
             `does not support it yet.`
         )
       }
-    } else {
+    } else { // setupResult为function，替换instance.render  setupResult为字面量对象，就reactive处理之后赋值给instance.setupState
       handleSetupResult(instance, setupResult, isSSR)
     }
-  } else {
+  } else { // 处理render函数和template，兼容Vue2.x语法
     finishComponentSetup(instance, isSSR)
   }
 }
 
 export function handleSetupResult(
   instance: ComponentInternalInstance,
-  setupResult: unknown,
+  setupResult: unknown, // setup()的返回值
   isSSR: boolean
 ) {
-  if (isFunction(setupResult)) {
+  if (isFunction(setupResult)) { // setupResult是function，就作为instance.render函数
     // setup returned an inline render function
     instance.render = setupResult as InternalRenderFunction
   } else if (isObject(setupResult)) {
-    if (__DEV__ && isVNode(setupResult)) {
+    if (__DEV__ && isVNode(setupResult)) { // setupResult不能直接是vnode
       warn(
         `setup() should not return VNodes directly - ` +
           `return a render function instead.`
@@ -533,6 +537,7 @@ export function handleSetupResult(
     }
     // setup returned bindings.
     // assuming a render function compiled from template is present.
+    // setupResult是object，将其reactive处理，赋给instance.setupState
     instance.setupState = reactive(setupResult)
     if (__DEV__) {
       exposeSetupStateOnRenderContext(instance)
@@ -544,6 +549,8 @@ export function handleSetupResult(
       }`
     )
   }
+  // 处理render函数和template
+  // 兼容Vue2.x语法
   finishComponentSetup(instance, isSSR)
 }
 
@@ -569,11 +576,11 @@ function finishComponentSetup(
   const Component = instance.type as ComponentOptions
 
   // template / render function normalization
-  if (__NODE_JS__ && isSSR) {
+  if (__NODE_JS__ && isSSR) { // SSR
     if (Component.render) {
       instance.render = Component.render as InternalRenderFunction
     }
-  } else if (!instance.render) {
+  } else if (!instance.render) { // 没有直接提供render函数，通过template走compile编译出render函数
     if (compile && Component.template && !Component.render) {
       if (__DEV__) {
         startMeasure(instance, `compile`)
@@ -621,6 +628,7 @@ function finishComponentSetup(
   }
 
   // support for 2.x options
+  // 兼容Vue2.x语法
   if (__FEATURE_OPTIONS__) {
     currentInstance = instance
     applyOptions(instance, Component)

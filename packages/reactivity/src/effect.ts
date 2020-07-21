@@ -247,6 +247,7 @@ export function trigger( // 通知更新
         oldTarget
       })
     }
+    // 如果effect自己配置了scheduler，则使用调度器运行effect
     // computed effect中有设置scheduler方法，执行scheduler会通知computed effect更新缓存值并通知对应的依赖进行更新
     if (effect.options.scheduler) {
       effect.options.scheduler(effect)

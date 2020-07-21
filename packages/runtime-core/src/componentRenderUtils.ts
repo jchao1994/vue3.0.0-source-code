@@ -37,6 +37,7 @@ export function markAttrsAccessed() {
   accessedAttrs = true
 }
 
+// 获取vnode
 export function renderComponentRoot(
   instance: ComponentInternalInstance
 ): VNode {
@@ -60,15 +61,15 @@ export function renderComponentRoot(
   }
   try {
     let fallthroughAttrs
-    if (vnode.shapeFlag & ShapeFlags.STATEFUL_COMPONENT) {
+    if (vnode.shapeFlag & ShapeFlags.STATEFUL_COMPONENT) { // STATEFUL_COMPONENT组件
       // withProxy is a proxy with a different `has` trap only for
       // runtime-compiled render functions using `with` block.
       const proxyToUse = withProxy || proxy
       result = normalizeVNode(
-        instance.render!.call(proxyToUse, proxyToUse!, renderCache)
+        instance.render!.call(proxyToUse, proxyToUse!, renderCache) // render生成vnode
       )
       fallthroughAttrs = attrs
-    } else {
+    } else { // FunctionalComponent组件
       // functional
       const render = Component as FunctionalComponent
       // in dev, mark attrs accessed if optional props (attrs === props)
@@ -120,10 +121,10 @@ export function renderComponentRoot(
         const extraAttrs: string[] = []
         for (let i = 0, l = allAttrs.length; i < l; i++) {
           const key = allAttrs[i]
-          if (isOn(key)) {
+          if (isOn(key)) { // 事件attr
             // remove `on`, lowercase first letter to reflect event casing accurately
             eventAttrs.push(key[2].toLowerCase() + key.slice(3))
-          } else {
+          } else { // 普通attr
             extraAttrs.push(key)
           }
         }
@@ -149,11 +150,13 @@ export function renderComponentRoot(
     }
 
     // inherit scopeId
+    // scopeId通过props的形式传入
     const parentScopeId = parent && parent.type.__scopeId
     if (parentScopeId) {
       root = cloneVNode(root, { [parentScopeId]: '' })
     }
     // inherit directives
+    // root.dirs = vnode.dirs
     if (vnode.dirs) {
       if (__DEV__ && !isElementRoot(root)) {
         warn(
@@ -164,6 +167,7 @@ export function renderComponentRoot(
       root.dirs = vnode.dirs
     }
     // inherit transition data
+    // root.transition = vnode.transition
     if (vnode.transition) {
       if (__DEV__ && !isElementRoot(root)) {
         warn(
@@ -174,6 +178,7 @@ export function renderComponentRoot(
       root.transition = vnode.transition
     }
     // inherit ref
+    // root.ref = vnode.ref
     if (Component.inheritRef && vnode.ref != null) {
       root.ref = vnode.ref
     }

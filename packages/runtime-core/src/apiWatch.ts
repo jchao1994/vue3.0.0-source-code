@@ -275,6 +275,7 @@ function doWatch(
     scheduler = job => queuePostRenderEffect(job, instance && instance.suspense)
   }
 
+  // 生成带lazy和computed属性的runner???
   const runner = effect(getter, {
     lazy: true,
     // so it runs before component update effects in pre flush mode

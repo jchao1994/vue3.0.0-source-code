@@ -16,6 +16,7 @@ let isFlushPending = false
 const RECURSION_LIMIT = 100
 type CountMap = Map<Job | Function, number>
 
+// promise
 export function nextTick(fn?: () => void): Promise<void> {
   return fn ? p.then(fn) : p
 }
@@ -34,6 +35,7 @@ export function invalidateJob(job: Job) {
   }
 }
 
+// 将cb放入postFlushCbs队列
 export function queuePostFlushCb(cb: Function | Function[]) {
   if (!isArray(cb)) {
     postFlushCbs.push(cb)
@@ -43,6 +45,7 @@ export function queuePostFlushCb(cb: Function | Function[]) {
   queueFlush()
 }
 
+// 调用nextTick(promise)进行异步渲染
 function queueFlush() {
   if (!isFlushing && !isFlushPending) {
     isFlushPending = true
@@ -50,8 +53,10 @@ function queueFlush() {
   }
 }
 
+// 遍历执行postFlushCbs并清空
 export function flushPostFlushCbs(seen?: CountMap) {
   if (postFlushCbs.length) {
+    // postFlushCbs去重并清空
     const cbs = [...new Set(postFlushCbs)]
     postFlushCbs.length = 0
     if (__DEV__) {
@@ -68,6 +73,7 @@ export function flushPostFlushCbs(seen?: CountMap) {
 
 const getId = (job: Job) => (job.id == null ? Infinity : job.id)
 
+// queue和postFlushCbs这两个队列分别是什么???
 function flushJobs(seen?: CountMap) {
   isFlushPending = false
   isFlushing = true
@@ -87,24 +93,30 @@ function flushJobs(seen?: CountMap) {
   // during execution of another flushed job.
   queue.sort((a, b) => getId(a!) - getId(b!))
 
+  // 遍历queue按id顺序由小到大依次执行job，也就是effect
   while ((job = queue.shift()) !== undefined) {
     if (job === null) {
       continue
     }
-    if (__DEV__) {
+    if (__DEV__) { // 开发环境检查递归次数，超过100次报错
       checkRecursiveUpdates(seen!, job)
     }
     callWithErrorHandling(job, null, ErrorCodes.SCHEDULER)
   }
+
+  // 遍历postFlushCbs并清空
   flushPostFlushCbs(seen)
+  // 将isFlushing重置为false，可以进行下一次的异步渲染
   isFlushing = false
   // some postFlushCb queued jobs!
   // keep flushing until it drains.
+  // 如果在运行过程中调用了queueJob或者queuePostRenderEffect，则继续执行flushJobs
   if (queue.length || postFlushCbs.length) {
     flushJobs(seen)
   }
 }
 
+// 检查递归更新，重复更新100次，报错
 function checkRecursiveUpdates(seen: CountMap, fn: Job | Function) {
   if (!seen.has(fn)) {
     seen.set(fn, 1)

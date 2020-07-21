@@ -21,6 +21,8 @@ declare module '@vue/reactivity' {
   }
 }
 
+// patchProp  处理class、style、onXXX等节点属性
+// nodeOps  封装insert、remove等DOM节点操作
 const rendererOptions = extend({ patchProp }, nodeOps)
 
 // lazy create the renderer - this makes core renderer logic tree-shakable
@@ -62,12 +64,14 @@ export const createApp = ((...args) => {
     const container = normalizeContainer(containerOrSelector)
     if (!container) return
     const component = app._component
+    // 不是异步组件，也没有render和template，就将容器container的innerHTML作为组件的template进行渲染
     if (!isFunction(component) && !component.render && !component.template) {
       component.template = container.innerHTML
     }
     // clear content before mounting
     container.innerHTML = ''
     const proxy = mount(container)
+    // 挂载完毕，移除v-cloak
     container.removeAttribute('v-cloak')
     return proxy
   }
@@ -102,6 +106,7 @@ function injectNativeTagCheck(app: App) {
   })
 }
 
+// 传入dom或者string，统一转为dom容器
 function normalizeContainer(container: Element | string): Element | null {
   if (isString(container)) {
     const res = document.querySelector(container)

@@ -109,12 +109,15 @@ export function createAppAPI<HostElement>(
   render: RootRenderFunction,
   hydrate?: RootHydrateFunction
 ): CreateAppFunction<HostElement> {
+  // 返回的function才是真正的createApp方法
   return function createApp(rootComponent, rootProps = null) {
+    // rootProps只能是null或者object
     if (rootProps != null && !isObject(rootProps)) {
       __DEV__ && warn(`root props passed to app.mount() must be an object.`)
       rootProps = null
     }
 
+    // 初始化上下文context和已加载插件installedPlugins
     const context = createAppContext()
     const installedPlugins = new Set()
 
@@ -130,6 +133,7 @@ export function createAppAPI<HostElement>(
         return context.config
       },
 
+      // 不能修改context.config
       set config(v) {
         if (__DEV__) {
           warn(
@@ -138,6 +142,7 @@ export function createAppAPI<HostElement>(
         }
       },
 
+      // Vue.use
       use(plugin: Plugin, ...options: any[]) {
         if (installedPlugins.has(plugin)) {
           __DEV__ && warn(`Plugin has already been applied to target app.`)
@@ -156,6 +161,7 @@ export function createAppAPI<HostElement>(
         return app
       },
 
+      // Vue.mixin
       mixin(mixin: ComponentOptions) {
         if (__FEATURE_OPTIONS__) {
           if (!context.mixins.includes(mixin)) {
@@ -172,40 +178,46 @@ export function createAppAPI<HostElement>(
         return app
       },
 
+      // Vue.component
       component(name: string, component?: PublicAPIComponent): any {
-        if (__DEV__) {
+        if (__DEV__) { // 不能使用内建tag或者原生tag
           validateComponentName(name, context.config)
         }
-        if (!component) {
+        if (!component) { // 不传入component，就是get方法
           return context.components[name]
         }
-        if (__DEV__ && context.components[name]) {
+        if (__DEV__ && context.components[name]) { // 不能重复注册component
           warn(`Component "${name}" has already been registered in target app.`)
         }
+        // 传入component，就是set方法
         context.components[name] = component
         return app
       },
 
+      // Vue.directive
       directive(name: string, directive?: Directive) {
-        if (__DEV__) {
+        if (__DEV__) { // 不能是内建指令名字
           validateDirectiveName(name)
         }
 
-        if (!directive) {
+        if (!directive) { // 不传入directive，就是get方法
           return context.directives[name] as any
         }
-        if (__DEV__ && context.directives[name]) {
+        if (__DEV__ && context.directives[name]) { // 不能重复注册directive
           warn(`Directive "${name}" has already been registered in target app.`)
         }
+        // 传入directive，就是set方法
         context.directives[name] = directive
         return app
       },
 
       mount(rootContainer: HostElement, isHydrate?: boolean): any {
         if (!isMounted) {
+          // 生成根组件vnode
           const vnode = createVNode(rootComponent as Component, rootProps)
           // store app context on the root VNode.
           // this will be set on the root instance on initial mount.
+          // 根vnode绑定上下文appContext
           vnode.appContext = context
 
           // HMR root reload
@@ -215,9 +227,9 @@ export function createAppAPI<HostElement>(
             }
           }
 
-          if (isHydrate && hydrate) {
+          if (isHydrate && hydrate) { // SSR
             hydrate(vnode as VNode<Node, Element>, rootContainer as any)
-          } else {
+          } else { // 非SSR，走render渲染
             render(vnode, rootContainer)
           }
           isMounted = true

@@ -57,7 +57,6 @@ function createRef(rawValue: unknown, shallow = false) {
   const r = {
     __v_isRef: true, // ref标志
     get value() {
-      // track???
       track(r, TrackOpTypes.GET, 'value')
       return value
     },
@@ -65,7 +64,6 @@ function createRef(rawValue: unknown, shallow = false) {
       if (hasChanged(toRaw(newVal), rawValue)) { // newVal发生改变才执行
         rawValue = newVal
         value = shallow ? newVal : convert(newVal) // 是否需要reactive()处理
-        // trigger???
         trigger(
           r,
           TriggerOpTypes.SET,

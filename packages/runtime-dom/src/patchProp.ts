@@ -8,6 +8,7 @@ import { RendererOptions } from '@vue/runtime-core'
 
 const nativeOnRE = /^on[a-z]/
 
+// 处理class style onXXX等节点属性
 export const patchProp: RendererOptions<Node, Element>['patchProp'] = (
   el,
   key,

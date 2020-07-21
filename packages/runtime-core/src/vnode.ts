@@ -309,36 +309,40 @@ function _createVNode(
   }
 
   // class & style normalization.
+  // 格式化class和style
   if (props) {
     // for reactive or proxy objects, we need to clone it to enable mutation.
     if (isProxy(props) || InternalObjectKey in props) {
       props = extend({}, props)
     }
     let { class: klass, style } = props
+    // 格式化class，由空格分开的string格式
     if (klass && !isString(klass)) {
       props.class = normalizeClass(klass)
     }
     if (isObject(style)) {
       // reactive state objects need to be cloned since they are likely to be
       // mutated
+      // ???
       if (isProxy(style) && !isArray(style)) {
         style = extend({}, style)
       }
+      // 格式化style，object格式
       props.style = normalizeStyle(style)
     }
   }
 
   // encode the vnode type information into a bitmap
   const shapeFlag = isString(type)
-    ? ShapeFlags.ELEMENT
+    ? ShapeFlags.ELEMENT // 1
     : __FEATURE_SUSPENSE__ && isSuspense(type)
-      ? ShapeFlags.SUSPENSE
+      ? ShapeFlags.SUSPENSE // 1 << 7
       : isTeleport(type)
-        ? ShapeFlags.TELEPORT
+        ? ShapeFlags.TELEPORT // 1 << 6
         : isObject(type)
-          ? ShapeFlags.STATEFUL_COMPONENT
+          ? ShapeFlags.STATEFUL_COMPONENT // 1 << 2
           : isFunction(type)
-            ? ShapeFlags.FUNCTIONAL_COMPONENT
+            ? ShapeFlags.FUNCTIONAL_COMPONENT // 1 << 1
             : 0
 
   if (__DEV__ && shapeFlag & ShapeFlags.STATEFUL_COMPONENT && isProxy(type)) {
@@ -378,24 +382,27 @@ function _createVNode(
     appContext: null
   }
 
+  // 根据shapeFlag和children得到type，并且进行位运算|，得到最终的shapeFlag
+  // vnode.children  vnode.shapeFlag
   normalizeChildren(vnode, children)
 
   // presence of a patch flag indicates this node needs patching on updates.
   // component nodes also should always be patched, because even if the
   // component doesn't need to update, it needs to persist the instance on to
   // the next vnode so that it can be properly unmounted later.
+  // 建立Block Tree???
   if (
     shouldTrack > 0 &&
     !isBlockNode &&
     currentBlock &&
     // the EVENTS flag is only for hydration and if it is the only flag, the
     // vnode should not be considered dynamic due to handler caching.
-    patchFlag !== PatchFlags.HYDRATE_EVENTS &&
+    patchFlag !== PatchFlags.HYDRATE_EVENTS && // 1 << 5 不是SSR
     (patchFlag > 0 ||
-      shapeFlag & ShapeFlags.SUSPENSE ||
-      shapeFlag & ShapeFlags.TELEPORT ||
-      shapeFlag & ShapeFlags.STATEFUL_COMPONENT ||
-      shapeFlag & ShapeFlags.FUNCTIONAL_COMPONENT)
+      shapeFlag & ShapeFlags.SUSPENSE || // 1 << 7
+      shapeFlag & ShapeFlags.TELEPORT || // 1 << 6
+      shapeFlag & ShapeFlags.STATEFUL_COMPONENT || // 1 << 2
+      shapeFlag & ShapeFlags.FUNCTIONAL_COMPONENT) // 1 << 1
   ) {
     currentBlock.push(vnode)
   }
@@ -510,23 +517,24 @@ export function cloneIfMounted(child: VNode): VNode {
   return child.el === null ? child : cloneVNode(child)
 }
 
+// 根据shapeFlag和children得到type，并且进行位运算|，得到最终的shapeFlag
 export function normalizeChildren(vnode: VNode, children: unknown) {
   let type = 0
   const { shapeFlag } = vnode
   if (children == null) {
     children = null
   } else if (isArray(children)) {
-    type = ShapeFlags.ARRAY_CHILDREN
+    type = ShapeFlags.ARRAY_CHILDREN // 1 << 4
   } else if (typeof children === 'object') {
     // Normalize slot to plain children
     if (
       (shapeFlag & ShapeFlags.ELEMENT || shapeFlag & ShapeFlags.TELEPORT) &&
       (children as any).default
-    ) {
+    ) { // shapeFlag为ShapeFlags.ELEMENT或ShapeFlags.TELEPORT
       normalizeChildren(vnode, (children as any).default())
       return
     } else {
-      type = ShapeFlags.SLOTS_CHILDREN
+      type = ShapeFlags.SLOTS_CHILDREN // 1 << 5
       if (!(children as RawSlots)._ && !(InternalObjectKey in children!)) {
         // if slots are not normalized, attach context instance
         // (compiled / normalized slots already have context)
@@ -535,7 +543,7 @@ export function normalizeChildren(vnode: VNode, children: unknown) {
     }
   } else if (isFunction(children)) {
     children = { default: children, _ctx: currentRenderingInstance }
-    type = ShapeFlags.SLOTS_CHILDREN
+    type = ShapeFlags.SLOTS_CHILDREN // 1 << 5
   } else {
     children = String(children)
     // force teleport children to array so it can be moved around
