@@ -327,12 +327,14 @@ const emptyAppContext = createAppContext()
 
 let uid = 0
 
+// 创建组件实例
 export function createComponentInstance(
-  vnode: VNode,
-  parent: ComponentInternalInstance | null,
+  vnode: VNode, // 新vnode
+  parent: ComponentInternalInstance | null, // 父组件实例
   suspense: SuspenseBoundary | null
 ) {
   // inherit parent app context - or - if root, adopt from root vnode
+  // 继承父组件的appContext
   const appContext =
     (parent ? parent.appContext : vnode.appContext) || emptyAppContext
   const instance: ComponentInternalInstance = {
@@ -397,7 +399,10 @@ export function createComponentInstance(
   } else {
     instance.ctx = { _: instance }
   }
+  // 每一个组件实例的root都指向全局根组件实例
   instance.root = parent ? parent.root : instance
+  // 给组件实例绑定emit方法
+  // this.$emit(event, ...args)
   instance.emit = emit.bind(null, instance)
   return instance
 }
@@ -426,6 +431,11 @@ export function validateComponentName(name: string, config: AppConfig) {
 
 export let isInSSRComponentSetup = false
 
+// 初始化props和slots
+// 执行传入的setup函数，就可以知道是否传入了render函数
+// 然后决定是否编译模板生成render函数
+// 最后对Options API做兼容处理
+// 这里只有在SSR的情况下才有返回值，返回值是一个promise
 export function setupComponent(
   instance: ComponentInternalInstance,
   isSSR = false
@@ -433,21 +443,39 @@ export function setupComponent(
   isInSSRComponentSetup = isSSR
 
   const { props, children, shapeFlag } = instance.vnode
-  const isStateful = shapeFlag & ShapeFlags.STATEFUL_COMPONENT // 组件vnode
-  initProps(instance, props, isStateful, isSSR) // 初始化props和attrs
-  initSlots(instance, children) // 初始化slots
+  // 有状态组件，也就是普通vue文件
+  const isStateful = shapeFlag & ShapeFlags.STATEFUL_COMPONENT
+  // 初始化instance上的props，将处理后的大部分存放在instance.props中，小部分存放到instance.attrs中
+  // instance.vnode.props(setup的返回props)和instance.type.props(传入的props)都进行了处理
+  // 客户端渲染在这里会对props进行浅层proxy响应式，服务端渲染则不会
+  initProps(instance, props, isStateful, isSSR)
+  // 初始化slots
+  // 处理带slot标签的具名插槽和没有slot标签的默认插槽，更新到intance.slots上，默认插槽的名字为default
+  initSlots(instance, children)
 
   const setupResult = isStateful
-    ? setupStatefulComponent(instance, isSSR) // 调用setup()方法，得到setupResult
+    // 状态组件都会走这一步，无论是否有setup函数
+    // setup函数是一个可以返回render函数的Composition API
+    // 根据setup的返回值，决定是否编译模板生成render函数
+    // 然后对Options API做兼容处理
+    // 这里只有在SSR的情况下才有返回值，返回值是一个promise
+    ? setupStatefulComponent(instance, isSSR)
     : undefined
+  // 重置isInSSRComponentSetup为false
   isInSSRComponentSetup = false
   return setupResult
 }
 
+// 状态组件都会走这一步，无论是否有setup函数
+// setup函数是一个可以返回render函数的Composition API
+// 根据setup的返回值，决定是否编译模板生成render函数
+// 然后对Options API做兼容处理
+// 这里只有在SSR的情况下才有返回值，返回值是一个promise
 function setupStatefulComponent(
-  instance: ComponentInternalInstance,
+  instance: ComponentInternalInstance, // 组件实例
   isSSR: boolean
 ) {
+  // 组件选项
   const Component = instance.type as ComponentOptions
 
   if (__DEV__) {
@@ -468,9 +496,15 @@ function setupStatefulComponent(
     }
   }
   // 0. create render proxy property access cache
+  // 创建render代理属性访问的缓存
   instance.accessCache = {}
   // 1. create public instance / render proxy
   // also mark it raw so it's never observed
+  // instance.proxy是instance.ctx._的代理，instance.proxy.xxx实际取的时instance.ctx._.xxx
+  // instance.ctx._指向原始instance
+  // 这里是的时机是组件初始化之后，还没执行setup，也就是还没有进行模板编译
+  // 后续的render函数，会将上下文context替换为 instance.withProxy || instance.proxy，也就是说这里的代理会在render过程中生效
+  // applyOptions兼容Options API时将需要this的API，用instance.proxy当作原类语法的this
   instance.proxy = new Proxy(instance.ctx, PublicInstanceProxyHandlers)
   if (__DEV__) {
     exposePropsOnRenderContext(instance)
@@ -478,25 +512,27 @@ function setupStatefulComponent(
   // 2. call setup()
   const { setup } = Component
   if (setup) { // Vue3 setup语法
-    // setupContext = { attrs: instance.attrs, slots: instance.slots,emit: instance.emit }
+    // setupContext = { attrs: instance.attrs, slots: instance.slots, emit: instance.emit }
+    // setup上下文，带attrs slots emit
     const setupContext = (instance.setupContext =
       setup.length > 1 ? createSetupContext(instance) : null)
-
+    
+    // 当前组件实例指向这个instance
     currentInstance = instance
     // 暂停Track
     pauseTracking()
-    // 执行setup()，过程中不进行track依赖收集
+    // 执行setup()，传入props和setupContext作为参数，过程中不进行track依赖收集
     const setupResult = callWithErrorHandling(
       setup,
       instance,
       ErrorCodes.SETUP_FUNCTION,
       [__DEV__ ? shallowReadonly(instance.props) : instance.props, setupContext]
     )
-    // 重置Track
+    // 重置Track和currentInstance
     resetTracking()
     currentInstance = null
 
-    if (isPromise(setupResult)) { // setupResult为promise，就放入instance.asyncDep
+    if (isPromise(setupResult)) { // setupResult为promise，主要用于SSR???
       if (isSSR) {
         // return the promise so server-renderer can wait on it
         return setupResult.then((resolvedResult: unknown) => {
@@ -512,14 +548,26 @@ function setupStatefulComponent(
             `does not support it yet.`
         )
       }
-    } else { // setupResult为function，替换instance.render  setupResult为字面量对象，就reactive处理之后赋值给instance.setupState
+    } else {
+      // setupResult为function，替换instance.render
+      // setupResult为字面量对象，就reactive处理之后赋值给instance.setupState
+      // 最后也会做如下操作
+      // 模板编译生成render函数(如果setup没有返回render函数的话)，放在instance.render上
+      // 如果要使用Vue2.x Options API，这个会做兼容处理
       handleSetupResult(instance, setupResult, isSSR)
     }
-  } else { // 处理render函数和template，兼容Vue2.x语法
+  } else { // 没有传入setup
+    // 这里才知道是否传入了render，然后决定是否编译模板生成render函数
+    // 模板编译生成render函数(如果setup没有返回render函数的话)，放在instance.render上
+    // 如果要使用Vue2.x Options API，这个会做兼容处理
     finishComponentSetup(instance, isSSR)
   }
 }
 
+// 得到setup函数的返回值setupResult后进行的操作
+// 根据setupResult的类型，决定处理成render还是setupState
+// 然后决定是否通过模板编译生成render
+// 最后看是否要兼容处理Options API
 export function handleSetupResult(
   instance: ComponentInternalInstance,
   setupResult: unknown, // setup()的返回值
@@ -549,8 +597,9 @@ export function handleSetupResult(
       }`
     )
   }
-  // 处理render函数和template
-  // 兼容Vue2.x语法
+  // 这里才知道是否传入了render，然后决定是否编译模板生成render函数
+  // 包括模板编译生成render函数(如果setup没有返回render函数的话)，放在instance.render上
+  // 如果要使用Vue2.x Options API，这个会做兼容处理
   finishComponentSetup(instance, isSSR)
 }
 
@@ -569,6 +618,9 @@ export function registerRuntimeCompiler(_compile: any) {
   compile = _compile
 }
 
+// 这里才知道是否传入了render，然后决定是否编译模板生成render函数
+// 模板编译生成render函数(如果setup没有返回render函数的话)，放在instance.render上
+// 如果要使用Vue2.x Options API，这个会做兼容处理
 function finishComponentSetup(
   instance: ComponentInternalInstance,
   isSSR: boolean
@@ -585,6 +637,7 @@ function finishComponentSetup(
       if (__DEV__) {
         startMeasure(instance, `compile`)
       }
+      // 模板编译，生成render函数放在instance.type.render上
       Component.render = compile(Component.template, {
         isCustomElement: instance.appContext.config.isCustomElement || NO
       })
@@ -592,6 +645,7 @@ function finishComponentSetup(
         endMeasure(instance, `compile`)
       }
       // mark the function as runtime compiled
+      // 标记组件的render函数是已经完成模板编译了
       ;(Component.render as InternalRenderFunction)._rc = true
     }
 
@@ -614,11 +668,19 @@ function finishComponentSetup(
       }
     }
 
+    // 将模板编译成的render函数再放到instance.render上
     instance.render = (Component.render || NOOP) as InternalRenderFunction
 
     // for runtime-compiled render functions using `with` blocks, the render
     // proxy used needs a different `has` handler which is more performant and
     // also only allows a whitelist of globals to fallthrough.
+    // _rc => runtime compile
+    // 完成模板编译后，_rc为true，intance.withProxy指向instance.ctx的代理
+    // intance.withProxy.xxx 代理到 intance.ctx._.xxx
+    // RuntimeCompiledPublicInstanceProxyHandlers相对于PublicInstanceProxyHandlers，扩充了get的一个判断，改写了has
+    // 也就是instance.withProxy相对于instance.proxy，扩充了get的一个判断，改写了has
+    // 这里的时机是在模板编译完成，生成render函数之后，紧接着做代理
+    // 后续的render函数，会将上下文context替换为 instance.withProxy || instance.proxy，也就是说这里的代理会在render过程中生效
     if (instance.render._rc) {
       instance.withProxy = new Proxy(
         instance.ctx,
@@ -627,7 +689,9 @@ function finishComponentSetup(
     }
   }
 
-  // support for 2.x options
+  // 到这里完成了模板编译，并且instance.render指向了新生成的render函数
+
+  // support for 2.x options  Options API
   // 兼容Vue2.x语法
   if (__FEATURE_OPTIONS__) {
     currentInstance = instance
@@ -653,6 +717,7 @@ const attrHandlers: ProxyHandler<Data> = {
   }
 }
 
+// { attrs: instance.attrs, slots: instance.slots, emit: instance.emit }
 function createSetupContext(instance: ComponentInternalInstance): SetupContext {
   if (__DEV__) {
     // We use getters in dev in case libs like test-utils overwrite instance

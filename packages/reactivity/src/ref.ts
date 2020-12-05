@@ -46,20 +46,25 @@ export function shallowRef(value?: unknown) {
 }
 
 // 创建ref对象
+// 给rawValue包一层ref，ref.value指向 rawValue经过reactive处理后的value(一般都会reactive处理)
+// 包一层ref的作用是进行响应式的依赖收集和更新
 function createRef(rawValue: unknown, shallow = false) {
   if (isRef(rawValue)) { // 已经ref过了，直接返回
     return rawValue
   }
-  // shallow标志决定是否convert()处理，默认进行convert()
-  // convert()对引用类型进行reactive()处理
+  // shallow 浅层响应式标志
+  // 浅层则不处理rawValue，否则reactive(rawValue)
+  // convert函数就是对引用类型进行reactive()处理
   let value = shallow ? rawValue : convert(rawValue)
   // 包裹一个重写get和set的ref对象
   const r = {
     __v_isRef: true, // ref标志
+    // 取ref.value时会进行依赖收集，并返回被包裹的value
     get value() {
       track(r, TrackOpTypes.GET, 'value')
       return value
     },
+    // 修改ref.value时会触发响应式更新
     set value(newVal) {
       if (hasChanged(toRaw(newVal), rawValue)) { // newVal发生改变才执行
         rawValue = newVal

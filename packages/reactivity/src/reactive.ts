@@ -57,8 +57,8 @@ export function reactive(target: object) {
   return createReactiveObject(
     target,
     false,
-    mutableHandlers, // baseHandlers
-    mutableCollectionHandlers // collectionHandlers
+    mutableHandlers, // baseHandlers array/object执行这个代理  get set deleteProperty has ownKeys
+    mutableCollectionHandlers // collectionHandlers set/map/weakMap/weakSet执行这个代理，这里暂时不看???
   )
 }
 
@@ -69,7 +69,7 @@ export function shallowReactive<T extends object>(target: T): T {
   return createReactiveObject(
     target,
     false,
-    shallowReactiveHandlers,
+    shallowReactiveHandlers, // get set
     shallowCollectionHandlers
   )
 }
@@ -80,7 +80,7 @@ export function readonly<T extends object>(
   return createReactiveObject(
     target,
     true,
-    readonlyHandlers, // baseHandlers
+    readonlyHandlers, // get set deleteProperty has ownKeys 其中set和deleteProperty只比原生多了一个报错，因为readonly不能set和delete
     readonlyCollectionHandlers // collectionHandlers
   )
 }
@@ -95,11 +95,12 @@ export function shallowReadonly<T extends object>(
   return createReactiveObject(
     target,
     true,
-    shallowReadonlyHandlers,
+    shallowReadonlyHandlers, // get
     readonlyCollectionHandlers
   )
 }
 
+// 对target添加响应式
 function createReactiveObject(
   target: Target,
   isReadonly: boolean,
@@ -115,8 +116,9 @@ function createReactiveObject(
   }
   // target is already a Proxy, return it.
   // exception: calling readonly() on a reactive object
-  // target已经readonly且没有reactive，直接返回
-  // __v_raw？？？
+  // target已经设置过响应式，直接返回
+  // 除非在一个响应式对象中执行readonly()方法
+  // __v_raw应该是标记已经proxy过了
   if (
     target[ReactiveFlags.raw] &&
     !(isReadonly && target[ReactiveFlags.isReactive])
@@ -134,11 +136,12 @@ function createReactiveObject(
   }
   // only a whitelist of value types can be observed.
   // 不具备观察的条件，直接返回
+  // 这里可以通过Object.freeze优化
   if (!canObserve(target)) {
     return target
   }
-  // Set, Map, WeakMap, WeakSet中的一种执行collectionHandlers  只代理get方法？？？
-  // 其他执行baseHandlers  get set deleteProperty has ownKeys
+  // set, map, weakMap, weakSet中的一种执行collectionHandlers  只代理get方法？？？
+  // target一般为array或object，属于其他情况，执行baseHandlers  get set deleteProperty has ownKeys
   const observed = new Proxy(
     target,
     collectionTypes.has(target.constructor) ? collectionHandlers : baseHandlers
@@ -149,6 +152,7 @@ function createReactiveObject(
     isReadonly ? ReactiveFlags.readonly : ReactiveFlags.reactive,
     observed
   )
+  // 返回target的proxy代理，也就是具备响应式的target
   return observed
 }
 

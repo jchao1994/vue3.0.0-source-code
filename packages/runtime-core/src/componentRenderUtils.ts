@@ -37,15 +37,18 @@ export function markAttrsAccessed() {
   accessedAttrs = true
 }
 
-// 获取vnode
+// instance => subTree vnode
+// 这里的subTree指的是vue文件内部template中的内容
+// 这里会调用之前编译好的或传入的 render函数 生成vnode，然后将之前的初始化vnode的属性合并过来
+// 最终返回完整的vnode
 export function renderComponentRoot(
-  instance: ComponentInternalInstance
+  instance: ComponentInternalInstance // 组件实例
 ): VNode {
   const {
     type: Component,
     parent,
     vnode,
-    proxy,
+    proxy, // publicThis，由于Vue3.x没有类语法，这个proxy类似Vue2.x的this
     withProxy,
     props,
     slots,
@@ -55,27 +58,33 @@ export function renderComponentRoot(
   } = instance
 
   let result
+  // 当前rendering组件实例
   currentRenderingInstance = instance
   if (__DEV__) {
     accessedAttrs = false
   }
   try {
     let fallthroughAttrs
-    if (vnode.shapeFlag & ShapeFlags.STATEFUL_COMPONENT) { // STATEFUL_COMPONENT组件
+    if (vnode.shapeFlag & ShapeFlags.STATEFUL_COMPONENT) { // 状态组件，也就是vue文件
       // withProxy is a proxy with a different `has` trap only for
       // runtime-compiled render functions using `with` block.
+      // withProxy仅仅用在模板编译出来的render函数外面包的 with(this) 上吗，这个this指向withProxy???
       const proxyToUse = withProxy || proxy
       result = normalizeVNode(
-        instance.render!.call(proxyToUse, proxyToUse!, renderCache) // render生成vnode
+        // render生成vnode
+        // 注意这里render的context是proxyToUse，也就是 instance.withProxy || instance.proxy
+        // 对render函数过程中的取值已完成代理
+        instance.render!.call(proxyToUse, proxyToUse!, renderCache)
       )
       fallthroughAttrs = attrs
-    } else { // FunctionalComponent组件
+    } else { // 函数组件，无状态组件
       // functional
       const render = Component as FunctionalComponent
       // in dev, mark attrs accessed if optional props (attrs === props)
       if (__DEV__ && attrs === props) {
         markAttrsAccessed()
       }
+      // 函数组件直接执行构造函数，生成vnode
       result = normalizeVNode(
         render.length > 1
           ? render(
@@ -89,16 +98,20 @@ export function renderComponentRoot(
                     slots,
                     emit
                   }
+                  // context
                 : { attrs, slots, emit }
             )
           : render(props, null as any /* we know it doesn't need it */)
       )
+      // 没有props，说明之前的props都转成attrs了，这种情况下只取attrs中的 class style onXxx
       fallthroughAttrs = Component.props ? attrs : getFallthroughAttrs(attrs)
     }
 
     // attr merging
     // in dev mode, comments are preserved, and it's possible for a template
     // to have comments along side the root element which makes it a fragment
+
+    // 通过render函数生成的根vnode，对应的是vue文件template内部的根dom
     let root = result
     let setRoot: ((root: VNode) => void) | undefined = undefined
     if (__DEV__) {
@@ -111,9 +124,10 @@ export function renderComponentRoot(
       Object.keys(fallthroughAttrs).length
     ) {
       if (
-        root.shapeFlag & ShapeFlags.ELEMENT ||
-        root.shapeFlag & ShapeFlags.COMPONENT
+        root.shapeFlag & ShapeFlags.ELEMENT || // 原生标签
+        root.shapeFlag & ShapeFlags.COMPONENT // 组件
       ) {
+        // 克隆一份根vnode
         root = cloneVNode(root, fallthroughAttrs)
       } else if (__DEV__ && !accessedAttrs && root.type !== Comment) {
         const allAttrs = Object.keys(attrs)
@@ -150,12 +164,14 @@ export function renderComponentRoot(
     }
 
     // inherit scopeId
+    // 继承父组件的scopeId
     // scopeId通过props的形式传入
     const parentScopeId = parent && parent.type.__scopeId
     if (parentScopeId) {
       root = cloneVNode(root, { [parentScopeId]: '' })
     }
     // inherit directives
+    // 继承vnode的指令
     // root.dirs = vnode.dirs
     if (vnode.dirs) {
       if (__DEV__ && !isElementRoot(root)) {
@@ -167,6 +183,7 @@ export function renderComponentRoot(
       root.dirs = vnode.dirs
     }
     // inherit transition data
+    // 继承vnode的transition
     // root.transition = vnode.transition
     if (vnode.transition) {
       if (__DEV__ && !isElementRoot(root)) {
@@ -178,11 +195,13 @@ export function renderComponentRoot(
       root.transition = vnode.transition
     }
     // inherit ref
+    // 继承vnode的ref
     // root.ref = vnode.ref
     if (Component.inheritRef && vnode.ref != null) {
       root.ref = vnode.ref
     }
 
+    // 将result更新为最新的root 根vnode
     if (__DEV__ && setRoot) {
       setRoot(root)
     } else {
@@ -192,8 +211,10 @@ export function renderComponentRoot(
     handleError(err, instance, ErrorCodes.RENDER_FUNCTION)
     result = createVNode(Comment)
   }
+  // 当前组件实例render结束，重置currentRenderingInstance为null
   currentRenderingInstance = null
 
+  // 返回根vnode
   return result
 }
 
@@ -241,10 +262,11 @@ const isElementRoot = (vnode: VNode) => {
   )
 }
 
+// 对比新老vnode的props和children来判断是否需要更新组件
 export function shouldUpdateComponent(
-  prevVNode: VNode,
-  nextVNode: VNode,
-  optimized?: boolean
+  prevVNode: VNode, // 老vnode
+  nextVNode: VNode, // 新vnode
+  optimized?: boolean // 是否经过模板编译标志
 ): boolean {
   const { props: prevProps, children: prevChildren } = prevVNode
   const { props: nextProps, children: nextChildren, patchFlag } = nextVNode
@@ -257,23 +279,30 @@ export function shouldUpdateComponent(
   }
 
   // force child update for runtime directive or transition on component vnode.
+  // 有自定义指令或着transition，会强制更新
   if (nextVNode.dirs || nextVNode.transition) {
     return true
   }
 
-  if (patchFlag > 0) {
+  // 1. 模板编译且带patchFlag，可以走快速通道
+  // 2. 没有经过模板编译
+  // 3. 模板编译，但没有patchFlag，说明纯静态，不需要更新，直接省去对比判断
+  if (patchFlag > 0) { // 模板编译且带patchFlag，可以走快速通道
     if (patchFlag & PatchFlags.DYNAMIC_SLOTS) {
       // slot content that references values that might have changed,
       // e.g. in a v-for
+      // 有动态slots，需要更新
       return true
     }
     if (patchFlag & PatchFlags.FULL_PROPS) {
+      // 新老props不同，需要更新
       if (!prevProps) {
         return !!nextProps
       }
       // presence of this flag indicates props are always non-null
       return hasPropsChanged(prevProps, nextProps!)
-    } else if (patchFlag & PatchFlags.PROPS) {
+    } else if (patchFlag & PatchFlags.PROPS) { // 1 << 3 PatchFlags.PROPS表示有部分props为动态props，且key都放在了vnode.dynamicProps中
+      // 动态props不同，需要更新
       const dynamicProps = nextVNode.dynamicProps!
       for (let i = 0; i < dynamicProps.length; i++) {
         const key = dynamicProps[i]
@@ -282,9 +311,13 @@ export function shouldUpdateComponent(
         }
       }
     }
-  } else if (!optimized) {
+  } else if (!optimized) { // 没有经过模板编译
     // this path is only taken by manually written render functions
     // so presence of any children leads to a forced update
+    // nextChildren必须是稳定的，或者新老props相同，才不需要更新
+    // 其他情况，都需要更新
+    // 这里的nextChildren.$stable什么情况下才会有???
+
     if (prevChildren || nextChildren) {
       if (!nextChildren || !(nextChildren as any).$stable) {
         return true
@@ -305,6 +338,7 @@ export function shouldUpdateComponent(
   return false
 }
 
+// props浅比较
 function hasPropsChanged(prevProps: Data, nextProps: Data): boolean {
   const nextKeys = Object.keys(nextProps)
   if (nextKeys.length !== Object.keys(prevProps).length) {

@@ -215,6 +215,7 @@ function parentNode(node: TestNode): TestElement | null {
   return node.parentNode
 }
 
+// 取node的下一个兄弟node
 function nextSibling(node: TestNode): TestNode | null {
   const parent = node.parentNode
   if (!parent) {

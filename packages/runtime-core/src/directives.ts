@@ -116,14 +116,16 @@ export function withDirectives<T extends VNode>(
   return vnode
 }
 
+// 新指令的oldValue指向老指令
+// 执行每一个新指令的name方法
 export function invokeDirectiveHook(
   vnode: VNode,
   prevVNode: VNode | null,
   instance: ComponentInternalInstance | null,
   name: keyof ObjectDirective
 ) {
-  const bindings = vnode.dirs!
-  const oldBindings = prevVNode && prevVNode.dirs!
+  const bindings = vnode.dirs! // 新指令
+  const oldBindings = prevVNode && prevVNode.dirs! // 老指令
   for (let i = 0; i < bindings.length; i++) {
     const binding = bindings[i]
     if (oldBindings) {

@@ -13,10 +13,11 @@ import { pauseTracking, resetTracking, DebuggerEvent } from '@vue/reactivity'
 
 export { onActivated, onDeactivated } from './components/KeepAlive'
 
+// target[type]中推入hook，这里不执行
 export function injectHook(
-  type: LifecycleHooks,
-  hook: Function & { __weh?: Function },
-  target: ComponentInternalInstance | null = currentInstance,
+  type: LifecycleHooks, // 生命周期名字
+  hook: Function & { __weh?: Function }, // 生命周期函数
+  target: ComponentInternalInstance | null = currentInstance, // 组件实例
   prepend: boolean = false
 ) {
   if (target) {
@@ -67,11 +68,13 @@ export function injectHook(
   }
 }
 
+// 执行hook，并在target[type]中推入hook
 export const createHook = <T extends Function = () => any>(
   lifecycle: LifecycleHooks
 ) => (hook: T, target: ComponentInternalInstance | null = currentInstance) =>
   // post-create lifecycle registrations are noops during SSR
   // target 默认为当前组件实例，在调用setup之前，会设置为当前正要运行setup的组件实例
+  // target[type]中推入hook，这里不执行
   !isInSSRComponentSetup && injectHook(lifecycle, hook, target)
 
 // onXXX(hook, target) => target['XXX'].push(hook)

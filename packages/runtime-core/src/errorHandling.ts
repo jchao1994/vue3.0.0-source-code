@@ -73,6 +73,7 @@ export function callWithErrorHandling(
   return res
 }
 
+// 带错误处理的执行fn
 export function callWithAsyncErrorHandling(
   fn: Function | Function[],
   instance: ComponentInternalInstance | null,

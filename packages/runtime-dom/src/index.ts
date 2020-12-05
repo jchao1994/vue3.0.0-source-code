@@ -21,6 +21,7 @@ declare module '@vue/reactivity' {
   }
 }
 
+// 应用到dom层级的方法
 // patchProp  处理class、style、onXXX等节点属性
 // nodeOps  封装insert、remove等DOM节点操作
 const rendererOptions = extend({ patchProp }, nodeOps)
@@ -52,6 +53,7 @@ export const hydrate = ((...args) => {
   ensureHydrationRenderer().hydrate(...args)
 }) as RootHydrateFunction
 
+// createApp(App).use(store).use(router).mount('#app')
 export const createApp = ((...args) => {
   const app = ensureRenderer().createApp(...args)
 

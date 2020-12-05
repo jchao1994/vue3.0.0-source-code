@@ -81,6 +81,7 @@ export type Plugin =
       install: PluginInstallFunction
     }
 
+// 创建app上下文 包括config mixins components directives provides
 export function createAppContext(): AppContext {
   return {
     config: {
@@ -105,11 +106,16 @@ export type CreateAppFunction<HostElement> = (
   rootProps?: Data | null
 ) => App<HostElement>
 
+// 这个函数返回的function才是真正的createApp方法
+// createApp(App).use(store).use(router).mount('#app')
 export function createAppAPI<HostElement>(
   render: RootRenderFunction,
   hydrate?: RootHydrateFunction
 ): CreateAppFunction<HostElement> {
-  // 返回的function才是真正的createApp方法
+  
+  // rootComponent 根组件选项，一般为App
+  // rootProps 一般不传
+  // 创建app对象并返回，带use mixin component directive mount unmount provide方法
   return function createApp(rootComponent, rootProps = null) {
     // rootProps只能是null或者object
     if (rootProps != null && !isObject(rootProps)) {
@@ -117,18 +123,21 @@ export function createAppAPI<HostElement>(
       rootProps = null
     }
 
-    // 初始化上下文context和已加载插件installedPlugins
+    // 初始化上下文context(包括config mixins components directives provides)和已加载插件installedPlugins
     const context = createAppContext()
     const installedPlugins = new Set()
 
+    // 标记是否已经挂载
     let isMounted = false
 
+    // 创建app对象并返回，带use mixin component directive mount unmount provide方法
     const app: App = {
-      _component: rootComponent as Component,
-      _props: rootProps,
+      _component: rootComponent as Component, // 根组件选项
+      _props: rootProps, // 根props，一般为null
       _container: null,
-      _context: context,
+      _context: context, // 根上下文，包括config mixins components directives provides
 
+      // 获取context.config
       get config() {
         return context.config
       },
@@ -142,9 +151,12 @@ export function createAppAPI<HostElement>(
         }
       },
 
-      // Vue.use
+      // Vue.use全局注册插件方法，添加到installedPlugins中，同Vue2.x
+      // 支持plugin是 带install方法的object 或 function(将自身作为install方法)
+      // 返回app用于链式调用
       use(plugin: Plugin, ...options: any[]) {
         if (installedPlugins.has(plugin)) {
+          // 不能重复注册，dev模式下会报警
           __DEV__ && warn(`Plugin has already been applied to target app.`)
         } else if (plugin && isFunction(plugin.install)) {
           installedPlugins.add(plugin)
@@ -158,62 +170,87 @@ export function createAppAPI<HostElement>(
               `function.`
           )
         }
+        // 返回app用于链式调用
         return app
       },
 
-      // Vue.mixin
+      // Vue.mixin全局混入方法，添加到context.mixins中，同Vue2.x
+      // 只适用于Options API，不适用于Composition API
+      // 返回app用于链式调用
       mixin(mixin: ComponentOptions) {
         if (__FEATURE_OPTIONS__) {
+          // Options API支持mixins
           if (!context.mixins.includes(mixin)) {
             context.mixins.push(mixin)
           } else if (__DEV__) {
+            // dev模式下重复会报警
             warn(
               'Mixin has already been applied to target app' +
                 (mixin.name ? `: ${mixin.name}` : '')
             )
           }
         } else if (__DEV__) {
+          // Composition API不支持mixins，直接用useHooks代替mixins
           warn('Mixins are only available in builds supporting Options API')
         }
+        // 返回app用于链式调用
         return app
       },
 
-      // Vue.component
+      // Vue.component全局注册组件，添加到context.components中，同Vue2.x
+      // context.components中存放的是name-组件选项
+      // 返回app用于链式调用
       component(name: string, component?: PublicAPIComponent): any {
-        if (__DEV__) { // 不能使用内建tag或者原生tag
+        // 不能使用内建tag或者原生tag
+        if (__DEV__) {
           validateComponentName(name, context.config)
         }
-        if (!component) { // 不传入component，就是get方法
+        // 不传入component，就是get方法，返回注册的同名component
+        if (!component) {
           return context.components[name]
         }
-        if (__DEV__ && context.components[name]) { // 不能重复注册component
+        // 不能重复注册component
+        if (__DEV__ && context.components[name]) {
           warn(`Component "${name}" has already been registered in target app.`)
         }
         // 传入component，就是set方法
         context.components[name] = component
+        // 返回app用于链式调用
         return app
       },
 
-      // Vue.directive
+      // Vue.directive全局注册指令，添加到context.directives中，同Vue2.x
+      // context.directives中存放的是name-指令选项(自定义指令 API 已更改为与组件生命周期一致，Vue3.x的改动)
+      // 返回app用于链式调用
       directive(name: string, directive?: Directive) {
-        if (__DEV__) { // 不能是内建指令名字
+        // 不能是内建指令名字
+        if (__DEV__) {
           validateDirectiveName(name)
         }
 
-        if (!directive) { // 不传入directive，就是get方法
+        // 不传入directive，就是get方法，返回注册的同名指令
+        if (!directive) {
           return context.directives[name] as any
         }
-        if (__DEV__ && context.directives[name]) { // 不能重复注册directive
+        // 不能重复注册directive
+        if (__DEV__ && context.directives[name]) {
           warn(`Directive "${name}" has already been registered in target app.`)
         }
         // 传入directive，就是set方法
         context.directives[name] = directive
+        // 返回app用于链式调用
         return app
       },
 
+      // 挂载
+      // 1. createVNode生成vnode虚拟dom
+      // 2. render(核心逻辑就是patch)
+      // createApp(App).use(store).use(router).mount('#app')
+      // rootContainer一般为'#app'
       mount(rootContainer: HostElement, isHydrate?: boolean): any {
         if (!isMounted) {
-          // 生成根组件vnode
+          // 创建根组件vnode
+          // 这里已经完成了组件类型二进制标志shapeFlag和children的处理
           const vnode = createVNode(rootComponent as Component, rootProps)
           // store app context on the root VNode.
           // this will be set on the root instance on initial mount.
@@ -227,15 +264,22 @@ export function createAppAPI<HostElement>(
             }
           }
 
-          if (isHydrate && hydrate) { // SSR
+          if (isHydrate && hydrate) {
+            // SSR
             hydrate(vnode as VNode<Node, Element>, rootContainer as any)
-          } else { // 非SSR，走render渲染
+          } else {
+            // 非SSR，走render渲染
             render(vnode, rootContainer)
           }
+          // 标记已经挂载
           isMounted = true
+          // 将根容器绑定到app._container上
           app._container = rootContainer
+          // !非空断言
+          // 返回的是什么???作用???
           return vnode.component!.proxy
         } else if (__DEV__) {
+          // dev模式下重复挂载报警
           warn(
             `App has already been mounted.\n` +
               `If you want to remount the same app, move your app creation logic ` +
@@ -245,16 +289,21 @@ export function createAppAPI<HostElement>(
         }
       },
 
+      // 卸载
       unmount() {
         if (isMounted) {
           render(null, app._container)
         } else if (__DEV__) {
+          // dev模式下对未挂载的app卸载会报警
           warn(`Cannot unmount an app that is not mounted.`)
         }
       },
 
+      // 根app的provide，添加到context.provides中
+      // 返回app用于链式调用
       provide(key, value) {
         if (__DEV__ && key in context.provides) {
+          // dev模式下重复定义provide会报警
           warn(
             `App already provides property with key "${String(key)}". ` +
               `It will be overwritten with the new value.`
@@ -263,11 +312,12 @@ export function createAppAPI<HostElement>(
         // TypeScript doesn't allow symbols as index type
         // https://github.com/Microsoft/TypeScript/issues/24587
         context.provides[key as string] = value
-
+        // 返回app用于链式调用
         return app
       }
     }
 
+    // createApp(App)的返回值，用于链式调用use mixin component directive mount unmount provide
     return app
   }
 }

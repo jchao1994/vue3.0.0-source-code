@@ -21,6 +21,7 @@ export function nextTick(fn?: () => void): Promise<void> {
   return fn ? p.then(fn) : p
 }
 
+// 将effect推入queue，并做去重，然后调用queueFlush执行异步更新
 export function queueJob(job: Job) {
   if (!queue.includes(job)) {
     queue.push(job)
@@ -28,6 +29,7 @@ export function queueJob(job: Job) {
   }
 }
 
+// queue有这个job，直接移除
 export function invalidateJob(job: Job) {
   const i = queue.indexOf(job)
   if (i > -1) {
@@ -73,9 +75,13 @@ export function flushPostFlushCbs(seen?: CountMap) {
 
 const getId = (job: Job) => (job.id == null ? Infinity : job.id)
 
-// queue和postFlushCbs这两个队列分别是什么???
+// queue是每个需要更新的effect数组，在flush过程中会根据id增序排序
+// postFlushCbs是另外的异步更新回调，如组件的unmounted生命周期
+// 这里flush的顺序是先更新effect数组，然后再执行postFlushCbs中的回调
 function flushJobs(seen?: CountMap) {
+  // 标记可以给postFlushCbs队列中添加新的cb，用于下一次的flush
   isFlushPending = false
+  // 标记正在flush
   isFlushing = true
   let job
   if (__DEV__) {
@@ -94,6 +100,7 @@ function flushJobs(seen?: CountMap) {
   queue.sort((a, b) => getId(a!) - getId(b!))
 
   // 遍历queue按id顺序由小到大依次执行job，也就是effect
+  // 更新每个effect
   while ((job = queue.shift()) !== undefined) {
     if (job === null) {
       continue
@@ -110,7 +117,11 @@ function flushJobs(seen?: CountMap) {
   isFlushing = false
   // some postFlushCb queued jobs!
   // keep flushing until it drains.
+  // 由于flushJobs开始的时候将isFlushPending设为false，所以在flush的过程中，可以给队列中添加新的effect或者回调
   // 如果在运行过程中调用了queueJob或者queuePostRenderEffect，则继续执行flushJobs
+  // 保证结束flush时，queue和postFlushCbs均为空
+  // 如果这里不继续flush，有可能在flush过程中新添加的effect或者回调一直无法被更新执行
+  // 因为flush这个行为只有在新添加的时候才会被推入nextTick
   if (queue.length || postFlushCbs.length) {
     flushJobs(seen)
   }

@@ -181,9 +181,9 @@ const publicPropertiesMap: Record<
   $root: i => i.root && i.root.proxy,
   $emit: i => i.emit,
   $options: i => (__FEATURE_OPTIONS__ ? resolveMergedOptions(i) : i.type),
-  $forceUpdate: i => () => queueJob(i.update),
+  $forceUpdate: i => () => queueJob(i.update), // i.update是组件对应的render effect
   $nextTick: () => nextTick,
-  $watch: __FEATURE_OPTIONS__ ? i => instanceWatch.bind(i) : NOOP
+  $watch: __FEATURE_OPTIONS__ ? i => instanceWatch.bind(i) : NOOP // 这里只支持Options API
 }
 
 const enum AccessTypes {
@@ -200,10 +200,13 @@ export interface ComponentRenderContext {
 }
 
 export const PublicInstanceProxyHandlers: ProxyHandler<any> = {
+  // 取值
+  // 对非保留属性，会存储到accessCache上进行缓存，性能优化
+  // 其他以$开头的属性，大部分都是直接取，有个别有特殊处理
   get({ _: instance }: ComponentRenderContext, key: string) {
     const {
       ctx,
-      setupState,
+      setupState, // setup()的返回值
       data,
       props,
       accessCache,
@@ -222,9 +225,18 @@ export const PublicInstanceProxyHandlers: ProxyHandler<any> = {
     // is the multiple hasOwn() calls. It's much faster to do a simple property
     // access on a plain object, so we use an accessCache object (with null
     // prototype) to memoize what access type a key corresponds to.
+    // 多个hasOwn会很耗性能，所以这里用accessCache对象存储所有数据的key和AccessTypes
+    // 这样只要一次取过一次，就有缓存，下次就可以直接取，性能优化
+
+    // 非保留key
+    // 第一次会遍历各个数据源找到对应值，然后存放在accessCache中key-AccessTypes
+    // 之后每次取值都直接从accessCache中取缓存
     if (key[0] !== '$') {
       const n = accessCache![key]
+      // 如果accessCache中有缓存，直接取
+      // 如果accessCache中没有缓存，先做缓存，再返回对应源中的值，每个数据的第一遍都会走这里，下一次就直接取缓存了
       if (n !== undefined) {
+        // accessCache中有缓存，直接根据对应的AccessTypes去对应的数据源中获取值
         switch (n) {
           case AccessTypes.SETUP:
             return setupState[key]
@@ -234,12 +246,12 @@ export const PublicInstanceProxyHandlers: ProxyHandler<any> = {
             return ctx[key]
           case AccessTypes.PROPS:
             return props![key]
-          // default: just fallthrough
+          // default: just fallthrough // 没有其他情况
         }
-      } else if (setupState !== EMPTY_OBJ && hasOwn(setupState, key)) {
+      } else if (setupState !== EMPTY_OBJ && hasOwn(setupState, key)) { // setupState
         accessCache![key] = AccessTypes.SETUP
         return setupState[key]
-      } else if (data !== EMPTY_OBJ && hasOwn(data, key)) {
+      } else if (data !== EMPTY_OBJ && hasOwn(data, key)) { // data
         accessCache![key] = AccessTypes.DATA
         return data[key]
       } else if (
@@ -247,33 +259,43 @@ export const PublicInstanceProxyHandlers: ProxyHandler<any> = {
         // props
         type.props &&
         hasOwn(normalizePropsOptions(type)[0]!, key)
-      ) {
+      ) { // 父组件传入的props
         accessCache![key] = AccessTypes.PROPS
         return props![key]
-      } else if (ctx !== EMPTY_OBJ && hasOwn(ctx, key)) {
+      } else if (ctx !== EMPTY_OBJ && hasOwn(ctx, key)) { // ctx
         accessCache![key] = AccessTypes.CONTEXT
         return ctx[key]
-      } else {
+      } else { // 其他
         accessCache![key] = AccessTypes.OTHER
       }
     }
 
+    // key[0] === '$'，也就是以$开头的key、
+    // 以$开头的保留key存放在instance上
+    // 以$开头的自定义key存放在instance.ctx上
+
+    // 保留key
+    // $ $el $data $props $attrs $slots $refs $parent $root
+    // $emit $options $forceUpdate $nextTick $watch
     const publicGetter = publicPropertiesMap[key]
     let cssModule, globalProperties
     // public $xxx properties
-    if (publicGetter) {
+    if (publicGetter) { // publicPropertiesMap中的保留key
+      // publicPropertiesMap中的保留key，也直接取
+      // 对$attrs做track处理，因为$attrs指向的是父组件中给子组件的外壳节点添加的属性，不包括class和props
+      // 子组件用到$attrs时会进行依赖收集
       if (key === '$attrs') {
         track(instance, TrackOpTypes.GET, key)
         __DEV__ && markAttrsAccessed()
       }
       return publicGetter(instance)
-    } else if (
+    } else if ( // type.__cssModules[key]，这个什么作用???
       // css module (injected by vue-loader)
       (cssModule = type.__cssModules) &&
       (cssModule = cssModule[key])
     ) {
       return cssModule
-    } else if (ctx !== EMPTY_OBJ && hasOwn(ctx, key)) {
+    } else if (ctx !== EMPTY_OBJ && hasOwn(ctx, key)) { // 用户传入的以$开头的自定义属性
       // user may set custom properties to `this` that start with `$`
       accessCache![key] = AccessTypes.CONTEXT
       return ctx[key]
@@ -281,7 +303,9 @@ export const PublicInstanceProxyHandlers: ProxyHandler<any> = {
       // global properties
       ((globalProperties = appContext.config.globalProperties),
       hasOwn(globalProperties, key))
-    ) {
+    ) { // globalProperties 全局属性
+      // app.config.globalProperties.foo = 'bar'
+      // this.foo就可以取到全局属性foo
       return globalProperties[key]
     } else if (
       __DEV__ &&
@@ -306,17 +330,21 @@ export const PublicInstanceProxyHandlers: ProxyHandler<any> = {
     }
   },
 
+  // 修改值
+  // 判断是哪个源的，修改对应源的数据
+  // props和以$开头的保留key不可修改
+  // 全局属性也不做修改，而且添加一个新属性到intance.ctx上
   set(
     { _: instance }: ComponentRenderContext,
     key: string,
     value: any
   ): boolean {
     const { data, setupState, ctx } = instance
-    if (setupState !== EMPTY_OBJ && hasOwn(setupState, key)) {
+    if (setupState !== EMPTY_OBJ && hasOwn(setupState, key)) { // setupState
       setupState[key] = value
-    } else if (data !== EMPTY_OBJ && hasOwn(data, key)) {
+    } else if (data !== EMPTY_OBJ && hasOwn(data, key)) { // data
       data[key] = value
-    } else if (key in instance.props) {
+    } else if (key in instance.props) { // props，数据单向流，props不可修改
       __DEV__ &&
         warn(
           `Attempting to mutate prop "${key}". Props are readonly.`,
@@ -324,7 +352,7 @@ export const PublicInstanceProxyHandlers: ProxyHandler<any> = {
         )
       return false
     }
-    if (key[0] === '$' && key.slice(1) in instance) {
+    if (key[0] === '$' && key.slice(1) in instance) { // 以$开头的保留key，不可修改，用户自定义的以$开头key存放在instance.ctx上
       __DEV__ &&
         warn(
           `Attempting to mutate public property "${key}". ` +
@@ -333,19 +361,22 @@ export const PublicInstanceProxyHandlers: ProxyHandler<any> = {
         )
       return false
     } else {
-      if (__DEV__ && key in instance.appContext.config.globalProperties) {
+      if (__DEV__ && key in instance.appContext.config.globalProperties) { // 全局属性，修改的时候不动全局属性，而是在intance.ctx上创建一个新属性
         Object.defineProperty(ctx, key, {
           enumerable: true,
           configurable: true,
           value
         })
-      } else {
+      } else { // 其他情况，直接更新在ctx上，用户自定义的以$开头的属性在这里处理
         ctx[key] = value
       }
     }
     return true
   },
 
+  // 判断是否有这个属性
+  // 依次判断数据源是否有
+  // accessCache缓存 data setupState props ctx publicPropertiesMap(以$开头的保留key) appContext.config.globalProperties(全局属性)
   has(
     {
       _: { data, setupState, accessCache, ctx, type, appContext }
@@ -374,6 +405,7 @@ if (__DEV__ && !__TEST__) {
   }
 }
 
+// 相对于PublicInstanceProxyHandlers，扩充了get的一个判断，改写了has
 export const RuntimeCompiledPublicInstanceProxyHandlers = extend(
   {},
   PublicInstanceProxyHandlers,
@@ -385,6 +417,7 @@ export const RuntimeCompiledPublicInstanceProxyHandlers = extend(
       }
       return PublicInstanceProxyHandlers.get!(target, key, target)
     },
+    // key不是以_开头，且key不是isGloballyWhitelisted全局白名单中的属性，就返回true
     has(_: ComponentRenderContext, key: string) {
       const has = key[0] !== '_' && !isGloballyWhitelisted(key)
       if (__DEV__ && !has && PublicInstanceProxyHandlers.has!(_, key)) {

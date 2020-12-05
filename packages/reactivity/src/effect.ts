@@ -67,8 +67,11 @@ export function effect<T = any>(
   return effect
 }
 
+// 移除effect的响应式
 export function stop(effect: ReactiveEffect) {
   if (effect.active) {
+    // 这个effect对应的所有dep不再订阅这个effect
+    // 然后清空effect的deps
     cleanup(effect)
     if (effect.options.onStop) {
       effect.options.onStop()
@@ -79,6 +82,7 @@ export function stop(effect: ReactiveEffect) {
 
 let uid = 0
 
+// 创建effect并返回
 function createReactiveEffect<T = any>(
   fn: (...args: any[]) => T,
   options: ReactiveEffectOptions
@@ -87,7 +91,8 @@ function createReactiveEffect<T = any>(
     if (!effect.active) { // 失活effect
       return options.scheduler ? undefined : fn(...args)
     }
-    // 新的effect
+    // effectStack是用于存放activeEffect的栈结构
+    // effectStack中没有effect才添加，如果有，就跳过，这里做了去重处理
     if (!effectStack.includes(effect)) {
       cleanup(effect) // 清除effect对应的双向存储
       try {
@@ -111,6 +116,7 @@ function createReactiveEffect<T = any>(
   return effect
 }
 
+// 清除effect对应的双向存储
 function cleanup(effect: ReactiveEffect) {
   const { deps } = effect
   if (deps.length) {
@@ -139,7 +145,8 @@ export function resetTracking() {
   shouldTrack = last === undefined ? true : last
 }
 
-export function track(target: object, type: TrackOpTypes, key: unknown) { // 依赖收集
+// 依赖收集，activeEffect依赖于这个target的key属性
+export function track(target: object, type: TrackOpTypes, key: unknown) {
   // 不需要track或者不是活跃的，直接返回
   if (!shouldTrack || activeEffect === undefined) {
     return
@@ -170,26 +177,41 @@ export function track(target: object, type: TrackOpTypes, key: unknown) { // 依
   }
 }
 
-export function trigger( // 通知更新
+// 通知观察者 effects 和 computedRunners 更新
+// effects和computedRunners都是effect
+export function trigger(
   target: object,
-  type: TriggerOpTypes,
+  type: TriggerOpTypes, // trigger的类型 set add delete clear
   key?: unknown,
   newValue?: unknown,
   oldValue?: unknown,
   oldTarget?: Map<unknown, unknown> | Set<unknown>
 ) {
+  // targetMap是所有target-depsMap的WeakMap
+  // depsMap是某一target上所有key-dep的Map
   const depsMap = targetMap.get(target)
-  if (!depsMap) { // 没有观察者，直接返回
+  // 没有观察者，不需要更新，直接返回
+  if (!depsMap) {
     // never been tracked
     return
   }
 
-  const effects = new Set<ReactiveEffect>() // 普通effects集合
-  const computedRunners = new Set<ReactiveEffect>() // computed集合
+  const effects = new Set<ReactiveEffect>() // 普通effects集合，用set可以去重
+  const computedRunners = new Set<ReactiveEffect>() // computed集合，用set可以去重
+  // 将effectsToAdd中的effect添加到effects和computedRunners中，用于后续触发更新
+  // 这里会去除掉 effect为activeEffect 且 shouldTrack为true 的情况，因为会造成无限循环的更新
+  // 这种情况只有可能发生在 修改了自身属性 且 支持track
   const add = (effectsToAdd: Set<ReactiveEffect> | undefined) => {
     if (effectsToAdd) {
       effectsToAdd.forEach(effect => {
-        // 排除activeEffect和不需要track的effect
+        // effect不为activeEffect或shouldTrack为false，就会添加
+
+        // 只有effect为activeEffect且shouldTrack为true，才不会添加
+        // 也就是修改了自身属性，如果添加了，就会进入无限循环的更新
+
+        // effect为activeEffect且shouldTrack为false，也会添加
+        // 不支持track的情况下，这里对自身属性进行修改，可以添加，因为没有响应式，不会进入无限循环的更新
+        // 这里有一个问题，既然不支持track，这里的effect怎么可能出现activeEffect???
         if (effect !== activeEffect || !shouldTrack) {
           if (effect.options.computed) {
             computedRunners.add(effect)
@@ -200,6 +222,9 @@ export function trigger( // 通知更新
           // the effect mutated its own dependency during its execution.
           // this can be caused by operations like foo.value++
           // do not trigger or we end in an infinite loop
+          // effect为activeEffect且shouldTrack为true
+          // 这个时候如果出现类似foo.value++，就不能继续trigger了，否则会无限循环
+          // 所以这里不做处理
         }
       })
     }
@@ -211,27 +236,41 @@ export function trigger( // 通知更新
     depsMap.forEach(add)
   } else if (key === 'length' && isArray(target)) { // 修改数组的length
     depsMap.forEach((dep, key) => {
-      if (key === 'length' || key >= (newValue as number)) { // 通知length和索引大于等于newValue对应的effect更新
+      // 1. 依赖数组的length
+      // 2. 依赖大于等于newValue(新长度)的索引，这里是因为设置了小的length之后，相当于对后面的值做了删除，需要对后面的值的依赖进行更新
+      if (key === 'length' || key >= (newValue as number)) {
         add(dep)
       }
     })
   } else {
     // schedule runs for SET | ADD | DELETE
+    // set add delete 都在这里处理
+
+    // void 0 就是undefined，相对于 undefined 节省3个字节，这里是这个原因???
+    // void xxx 总是返回undefined
+    // 只要key不是undefined，这里已经把key对应的依赖effect添加到effects和computedRunners中了
     if (key !== void 0) {
       add(depsMap.get(key))
     }
     // also run for iteration key on ADD | DELETE | Map.SET
+    // 还需要处理一些额外的情况，也就是key还会带来其他变化的依赖也需要更新
+    // 比如，添加新属性或者删除属性，会影响到遍历某一个target的结果，这里会对遍历target的依赖进行更新，这是Vue2.x不支持的
+    // 添加属性  Vue2.x只能Vue.set(obj, key, value)触发响应式，而Vue3.x这里会做处理触发更新
     const isAddOrDelete =
-      type === TriggerOpTypes.ADD || // 执行add
-      (type === TriggerOpTypes.DELETE && !isArray(target)) // 非数组执行delete
+      type === TriggerOpTypes.ADD || // add  也就是新添加的属性，新添加的属性没有依赖effect，只会触发依赖iterate效果的effect更新，如 obj.xxx = 'xxx'添加新key-value
+      (type === TriggerOpTypes.DELETE && !isArray(target)) // delete 且 非array  删除属性也会触发依赖iterate效果的effect更新
     if (
       isAddOrDelete ||
-      (type === TriggerOpTypes.SET && target instanceof Map) // map执行set
+      (type === TriggerOpTypes.SET && target instanceof Map) // map.set
     ) {
-      add(depsMap.get(isArray(target) ? 'length' : ITERATE_KEY)) // iterate？？？
+      // Symbol(__DEV__ ? 'iterate' : '')
+      // 使用ownKeys相关遍历方法的时候会进行ITERATE_KEY的依赖收集
+      // Object.getOwnPropertyNames(proxy) Object.getOwnPropertySymbols(proxy) Object.keys(proxy) for in等
+      add(depsMap.get(isArray(target) ? 'length' : ITERATE_KEY))
     }
-    if (isAddOrDelete && target instanceof Map) {
-      add(depsMap.get(MAP_KEY_ITERATE_KEY)) // Map key iterate？？？
+    if (isAddOrDelete && target instanceof Map) { // map.add  map.delete
+      // Symbol(__DEV__ ? 'Map key iterate' : '') 这是什么意思???
+      add(depsMap.get(MAP_KEY_ITERATE_KEY))
     }
   }
 
@@ -247,8 +286,11 @@ export function trigger( // 通知更新
         oldTarget
       })
     }
-    // 如果effect自己配置了scheduler，则使用调度器运行effect
-    // computed effect中有设置scheduler方法，执行scheduler会通知computed effect更新缓存值并通知对应的依赖进行更新
+    // 只有render effect和computed effect有scheduler方法
+    // computed effect  执行scheduler会通知依赖computed的effect(这个effect也会走到这里，并放入queue队列，走异步更新)更新，在更新过程中重新取computed的value才会触发computed的重新计算并缓存
+    // render effect  scheduler也就是queueJob，也就是在queue队列中添加effect，然后queueFlush(内部是通过nextTick进行异步渲染)
+    // 这里一定是把所有的render effect都放入queue(带去重，避免重复更新)之后，才会异步更新
+    // 由于computed effect的scheduler只是通知它自己的依赖effect进行异步更新，所以computed effect的scheduler本身是同步执行的，没有问题
     if (effect.options.scheduler) {
       effect.options.scheduler(effect)
     } else {
@@ -258,6 +300,9 @@ export function trigger( // 通知更新
 
   // Important: computed effects must be run first so that computed getters
   // can be invalidated before any normal effects that depend on them are run.
+  // Vue3.0.0  这里computed必须先执行，这样在后面依赖这个computed的effect中就可以获取到正确的值了，否则还会用前一个缓存的值
+  // 其实上面说的情况不存在，这里无所谓先后，在Vue3.0.3中也将两者合并在一起了
+  // 因为最后的结果总是将所有render effect放入queue队列进行异步更新，而异步更新的顺序是根据effect的id来排序的
   computedRunners.forEach(run)
   effects.forEach(run)
 }

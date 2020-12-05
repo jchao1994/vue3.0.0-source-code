@@ -33,6 +33,8 @@ export type EmitFn<
       }[Event]
     >
 
+// this.$emit(event, ...args)
+// 触发绑定在组件实例上的事件，支持普通的event xxx，以及v-model的 update:xxx 
 export function emit(
   instance: ComponentInternalInstance,
   event: string,
@@ -69,6 +71,7 @@ export function emit(
   // for v-model update:xxx events, also trigger kebab-case equivalent
   // for props passed via kebab-case
   if (!handler && event.startsWith('update:')) {
+    // 驼峰转-连接
     event = hyphenate(event)
     handler = props[`on${capitalize(event)}`]
   }

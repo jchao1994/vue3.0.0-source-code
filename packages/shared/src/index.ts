@@ -82,6 +82,7 @@ const cacheStringFunction = <T extends (str: string) => string>(fn: T): T => {
 }
 
 const camelizeRE = /-(\w)/g
+// -连接转驼峰
 export const camelize = cacheStringFunction(
   (str: string): string => {
     return str.replace(camelizeRE, (_, c) => (c ? c.toUpperCase() : ''))
@@ -89,6 +90,7 @@ export const camelize = cacheStringFunction(
 )
 
 const hyphenateRE = /\B([A-Z])/g
+// 驼峰转-连接
 export const hyphenate = cacheStringFunction(
   (str: string): string => {
     return str.replace(hyphenateRE, '-$1').toLowerCase()

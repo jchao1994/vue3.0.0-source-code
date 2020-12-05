@@ -355,9 +355,10 @@ function createDuplicateChecker() {
 
 type DataFn = (vm: ComponentPublicInstance) => any
 
+// 兼容处理Options API
 export function applyOptions(
-  instance: ComponentInternalInstance,
-  options: ComponentOptions,
+  instance: ComponentInternalInstance, // 组件实例，此时已经带了render函数了
+  options: ComponentOptions, // 组件选项
   deferredData: DataFn[] = [],
   deferredWatch: ComponentWatchOptions[] = [],
   asMixin: boolean = false
@@ -390,22 +391,30 @@ export function applyOptions(
     errorCaptured
   } = options
 
+  // 将instance.proxy赋值给publicThis
+  // 这个instance.proxy负责所有从组件上取值的代理
+  // 这里是兼容Options API，传入的this实际上是instance.proxy
+  // 因为Vue2.x的某些API中需要有this的支持，所以这里必须给出正确的this，也就是instance.proxy
   const publicThis = instance.proxy!
   const ctx = instance.ctx
   const globalMixins = instance.appContext.mixins
   // call it only during dev
 
   // applyOptions is called non-as-mixin once per instance
+  // 执行beforeCreate生命周期，混入全局mixins
+  // Vue3.x没有beforeCreate生命周期，所以这里不做兼容
   if (!asMixin) {
     callSyncHook('beforeCreate', options, publicThis, globalMixins)
     // global mixins are applied first
     applyMixins(instance, globalMixins, deferredData, deferredWatch)
   }
   // extending a base component...
+  // 合并extendsOptions
   if (extendsOptions) {
     applyOptions(instance, extendsOptions, deferredData, deferredWatch, true)
   }
   // local mixins
+  // 混入options.mixins
   if (mixins) {
     applyMixins(instance, mixins, deferredData, deferredWatch)
   }
@@ -429,6 +438,13 @@ export function applyOptions(
   // - computed
   // - watch (deferred since it relies on `this` access)
 
+  // 这里有的放在instance.ctx上，有的放在instance上，有什么区别吗???
+
+  // 处理inject，将每一个inject绑定到instance.ctx上
+  // 由于instance.provides的原型链指向instance.parent.provides
+  // 所以这里的provides可以获取到父组件以及祖先组件的provides
+  // 而inject处理早于provides，所以不会获取到自身组件的provides
+  // 如果没有找到对应provide，就取defaultValue
   if (injectOptions) {
     if (isArray(injectOptions)) {
       for (let i = 0; i < injectOptions.length; i++) {
@@ -453,6 +469,7 @@ export function applyOptions(
     }
   }
 
+  // 处理methods，将每一个method绑定到intance.ctx上
   if (methods) {
     for (const key in methods) {
       const methodHandler = (methods as MethodOptions)[key]
@@ -470,6 +487,7 @@ export function applyOptions(
     }
   }
 
+  // 处理data，合并到instance.data上
   if (dataOptions) {
     if (__DEV__ && !isFunction(dataOptions)) {
       warn(
@@ -479,11 +497,14 @@ export function applyOptions(
     }
 
     if (asMixin) {
+      // 延迟将data合并到instance.data中
       deferredData.push(dataOptions as DataFn)
     } else {
+      // 将data合并到instance.data中
       resolveData(instance, dataOptions, publicThis)
     }
   }
+  // 延迟将data合并到instance.data中
   if (!asMixin) {
     if (deferredData.length) {
       deferredData.forEach(dataFn => resolveData(instance, dataFn, publicThis))
@@ -505,6 +526,7 @@ export function applyOptions(
     }
   }
 
+  // 处理computed，将每个computed绑定到instance.ctx上
   if (computedOptions) {
     for (const key in computedOptions) {
       const opt = (computedOptions as ComputedOptions)[key]
@@ -526,6 +548,7 @@ export function applyOptions(
                 )
               }
             : NOOP
+      // 设置计算属性
       const c = computed({
         get,
         set
@@ -542,17 +565,27 @@ export function applyOptions(
     }
   }
 
+  // 延迟处理watch
   if (watchOptions) {
     deferredWatch.push(watchOptions)
   }
+  // 延迟处理watch
+  // 对每一个watch生成effect，并进行依赖收集
+  // currentInstance.effects上存储watch对应的effect
   if (!asMixin && deferredWatch.length) {
     deferredWatch.forEach(watchOptions => {
       for (const key in watchOptions) {
+        // 根据不同类型的选项创建watch 支持string function object array
+        // 对每一个watch生成effect，并进行依赖收集
+        // currentInstance.effects上存储watch对应的effect
         createWatcher(watchOptions[key], ctx, publicThis, key)
       }
     })
   }
 
+  // 处理provide
+  // instance.provides的原型链指向instance.parent.provides，用于后代inject获取
+  // 将这里的provide都添加到instance.provides中
   if (provideOptions) {
     const provides = isFunction(provideOptions)
       ? provideOptions.call(publicThis)
@@ -563,17 +596,21 @@ export function applyOptions(
   }
 
   // asset options
+  // 处理components，合并到instance.components上
   if (components) {
     extend(instance.components, components)
   }
+  // 处理directives，合并到instance.directives上
   if (directives) {
     extend(instance.directives, directives)
   }
 
   // lifecycle options
+  // Vue3.x没有created生命周期，所以这里不做兼容
   if (!asMixin) {
     callSyncHook('created', options, publicThis, globalMixins)
   }
+  // target[type]中推入对应的hook，这里不执行
   if (beforeMount) {
     onBeforeMount(beforeMount.bind(publicThis))
   }
@@ -609,6 +646,7 @@ export function applyOptions(
   }
 }
 
+// 按顺序执行hook 全局mixins => options.extends => options.mixins => options[name]
 function callSyncHook(
   name: 'beforeCreate' | 'created',
   options: ComponentOptions,
@@ -654,6 +692,7 @@ function applyMixins(
   }
 }
 
+// 将data合并到instance.data中
 function resolveData(
   instance: ComponentInternalInstance,
   dataFn: DataFn,
@@ -669,7 +708,7 @@ function resolveData(
   }
   if (!isObject(data)) {
     __DEV__ && warn(`data() should return an object.`)
-  } else if (instance.data === EMPTY_OBJ) {
+  } else if (instance.data === EMPTY_OBJ) { // 空{}，说明还没有reactive，顺便reactive一下
     instance.data = reactive(data)
   } else {
     // existing data: this is a mixin or extends.
@@ -677,26 +716,28 @@ function resolveData(
   }
 }
 
+// 根据不同类型的选项创建watch 支持string function object array
 function createWatcher(
-  raw: ComponentWatchOptionItem,
-  ctx: Data,
-  publicThis: ComponentPublicInstance,
+  raw: ComponentWatchOptionItem, // watchOptions[key]
+  ctx: Data, // instance.ctx
+  publicThis: ComponentPublicInstance, // instance.proxy，取值会代理到instance.ctx._上，也就是原始instance
   key: string
 ) {
   const getter = () => (publicThis as any)[key]
-  if (isString(raw)) {
+  if (isString(raw)) { // watch选项为字符串，表示是method名
+    // 获取对应的method
     const handler = ctx[raw]
     if (isFunction(handler)) {
       watch(getter, handler as WatchCallback)
     } else if (__DEV__) {
       warn(`Invalid watch handler specified by key "${raw}"`, handler)
     }
-  } else if (isFunction(raw)) {
+  } else if (isFunction(raw)) { // watch选项为function，最常用
     watch(getter, raw.bind(publicThis))
-  } else if (isObject(raw)) {
-    if (isArray(raw)) {
+  } else if (isObject(raw)) { // watch选项为object或array
+    if (isArray(raw)) { // array，逐一执行选项
       raw.forEach(r => createWatcher(r, ctx, publicThis, key))
-    } else {
+    } else { // object，需要带handle函数
       watch(getter, raw.handler.bind(publicThis), raw)
     }
   } else if (__DEV__) {
