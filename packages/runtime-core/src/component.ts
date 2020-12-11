@@ -329,7 +329,7 @@ let uid = 0
 
 // 创建组件实例
 export function createComponentInstance(
-  vnode: VNode, // 新vnode
+  vnode: VNode, // 新初始vnode
   parent: ComponentInternalInstance | null, // 父组件实例
   suspense: SuspenseBoundary | null
 ) {
@@ -533,14 +533,22 @@ function setupStatefulComponent(
     currentInstance = null
 
     if (isPromise(setupResult)) { // setupResult为promise，主要用于SSR???
-      if (isSSR) {
+      // SSR在服务端执行renderToString时遇到defineAsyncComponent异步组件，这时的setupResult会是一个promise
+
+      if (isSSR) { // SSR在服务端执行renderToString
         // return the promise so server-renderer can wait on it
+        // 这里的resolvedResult是 生成初始vnode的render函数 () => createInnerComp(comp, instance)
+        // 这里同步返回出去的还是一个promise，返回到 packages/server-renderer/src/renderToString.ts 的 renderComponentVNode 中
         return setupResult.then((resolvedResult: unknown) => {
+          // 将返回的render函数放在instance.render上
+          // 但这里没有进一步的mount
           handleSetupResult(instance, resolvedResult, isSSR)
         })
-      } else if (__FEATURE_SUSPENSE__) {
+      } else if (__FEATURE_SUSPENSE__) { // 客户端渲染的suspense中，也就是说这里是suspense内部的defineAsyncComponent异步组件
         // async setup returned Promise.
         // bail here and wait for re-entry.
+        // setupResult是一个promise，这里promise内部完成异步加载组件，然后把setup的返回值render函数放到instance.render上
+        // render和hydrate都会走到这里
         instance.asyncDep = setupResult
       } else if (__DEV__) {
         warn(
@@ -628,7 +636,7 @@ function finishComponentSetup(
   const Component = instance.type as ComponentOptions
 
   // template / render function normalization
-  if (__NODE_JS__ && isSSR) { // SSR
+  if (__NODE_JS__ && isSSR) { // SSR在服务端执行renderToString
     if (Component.render) {
       instance.render = Component.render as InternalRenderFunction
     }

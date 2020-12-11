@@ -1,5 +1,7 @@
 const escapeRE = /["'&<>]/
 
+// 处理文本children
+// " & ' < > 转换成html格式
 export function escapeHtml(string: unknown) {
   const str = '' + string
   const match = escapeRE.exec(str)
@@ -47,6 +49,7 @@ export function escapeHtml(string: unknown) {
 // https://www.w3.org/TR/html52/syntax.html#comments
 const commentStripRE = /^-?>|<!--|-->|--!>|<!-$/g
 
+// 去除注释节点的首尾占位符，如 <!----!> <!---->
 export function escapeHtmlComment(src: string): string {
   return src.replace(commentStripRE, '')
 }

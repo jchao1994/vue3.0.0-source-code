@@ -509,7 +509,7 @@ function baseCreateRenderer(
             isSVG,
             optimized
           )
-        } else if (shapeFlag & ShapeFlags.TELEPORT) { // teleport，暂时不看???
+        } else if (shapeFlag & ShapeFlags.TELEPORT) { // teleport，不改变组件层级，但可以渲染在任何dom位置
           ;(type as typeof TeleportImpl).process(
             n1,
             n2,
@@ -521,7 +521,18 @@ function baseCreateRenderer(
             optimized,
             internals
           )
-        } else if (__FEATURE_SUSPENSE__ && shapeFlag & ShapeFlags.SUSPENSE) { // suspense，暂时不看???
+        } else if (__FEATURE_SUSPENSE__ && shapeFlag & ShapeFlags.SUSPENSE) { // suspense
+          // 同React的Suspense组件
+          // 用法:
+          //    <Suspense>
+          //      <template #default>
+          //        <OtherComponent />
+          //      </template>
+          //       <template #fallback>
+          //         Loading ...
+          //      </template>
+          //    </Suspense>
+          // 其中OtherComponent一般是由defineAsyncComponent加载的异步组件
           ;(type as typeof SuspenseImpl).process(
             n1,
             n2,
@@ -1353,6 +1364,8 @@ function baseCreateRenderer(
 
     // setup() is async. This component relies on async logic to be resolved
     // before proceeding
+    // 在suspense内部 且 当前组件是defineAsyncComponent异步组件，走下面的逻辑
+    // 不直接走setupRenderEffect，而是在promise.then内走setupRenderEffect
     if (__FEATURE_SUSPENSE__ && instance.asyncDep) {
       if (!parentSuspense) {
         if (__DEV__) warn('async setup() is used without a suspense boundary!')
@@ -1362,6 +1375,9 @@ function baseCreateRenderer(
       parentSuspense.registerDep(instance, setupRenderEffect)
 
       // Give it a placeholder if this is not hydration
+      // 不是hydrate过程中，也就是客户端渲染
+      // 创建一个空的注释节点作为占位，插入到container中
+      // 用于异步组件加载完成之后，找到其父容器和下一个兄弟dom(位置dom)
       if (!initialVNode.el) {
         const placeholder = (instance.subTree = createVNode(Comment))
         processCommentNode(null, placeholder, container!, anchor)
@@ -1402,8 +1418,10 @@ function baseCreateRenderer(
       ) {
         // async & still pending - just update props and slots
         // since the component's reactive effect for render isn't set-up yet
-        // __FEATURE_SUSPENSE__且setupResult为promise的情况，会走到这里
         // instance.asyncDep = setupResult
+        // instance是suspense内部的异步组件，且还未加载完成
+        // 这里只需要更新props和slots，因为等其加载完成之后，会进行handleSetupResult和setupRenderEffect
+        // 也就是加载完成之后会设置instance.update，这里不需要做后续处理
 
         if (__DEV__) {
           pushWarningContext(n2)
@@ -1483,7 +1501,7 @@ function baseCreateRenderer(
           invokeVNodeHook(vnodeHook, parent, initialVNode)
         }
 
-        if (el && hydrateNode) { // SSR混合，暂时不看???
+        if (el && hydrateNode) { // SSR混合
           if (__DEV__) {
             startMeasure(instance, `hydrate`)
           }

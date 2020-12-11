@@ -27,10 +27,12 @@ export const isBooleanAttr = /*#__PURE__*/ makeMap(
 const unsafeAttrCharRE = /[>/="'\u0009\u000a\u000c\u0020]/
 const attrValidationCache: Record<string, boolean> = {}
 
+// 安全的属性名
 export function isSSRSafeAttrName(name: string): boolean {
   if (attrValidationCache.hasOwnProperty(name)) {
     return attrValidationCache[name]
   }
+  // 属性名带 > / = " ' \u0009(水平制表符\t) \u000a(换行符\n) \u000c \u0020(空格)
   const isUnsafe = unsafeAttrCharRE.test(name)
   if (isUnsafe) {
     console.error(`unsafe attribute name: ${name}`)

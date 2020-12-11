@@ -353,10 +353,18 @@ function hasPropsChanged(prevProps: Data, nextProps: Data): boolean {
   return false
 }
 
+// 更新父suspense.vnode.el
+// 父suspense的subTree是当前suspense
+// 更新父suspense.vnode.el指向当前suspense.vnode.el
+// 也就是suspense.vnode.el指向的是内部第一个不为suspense的subTree.el
+// updateHOCHostEl用来保证hydrateNode时的node(也就是dom)一定是与suspense内部第一个非suspense的subTree对应
 export function updateHOCHostEl(
   { vnode, parent }: ComponentInternalInstance,
   el: typeof vnode.el // HostNode
 ) {
+  // 父suspense的subTree是当前suspense
+  // 更新父suspense.vnode.el指向当前suspense.vnode.el
+  // 也就是suspense.vnode.el指向的是内部第一个不为suspense的subTree.el
   while (parent && parent.subTree === vnode) {
     ;(vnode = parent.vnode).el = el
     parent = parent.parent

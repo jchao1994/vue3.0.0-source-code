@@ -249,7 +249,7 @@ export function createAppAPI<HostElement>(
       // rootContainer一般为'#app'
       mount(rootContainer: HostElement, isHydrate?: boolean): any {
         if (!isMounted) {
-          // 创建根组件vnode
+          // 创建根组件初始vnode
           // 这里已经完成了组件类型二进制标志shapeFlag和children的处理
           const vnode = createVNode(rootComponent as Component, rootProps)
           // store app context on the root VNode.

@@ -574,7 +574,10 @@ export function normalizeChildren(vnode: VNode, children: unknown) {
       // shapeFlag为ShapeFlags.ELEMENT或ShapeFlags.TELEPORT
       // 原生标签 teleport组件
       // 取children.default()重新normalizeChildren
-      // 这里的children.default()取到的是啥???
+      // 这里的children.default是默认插槽，执行children.default()是什么意思???
+      // <teleport to="#popup" :disabled="displayVideoInline">
+      //   <video src="./my-movie.mp4">
+      // </teleport>
       normalizeChildren(vnode, (children as any).default())
       return
     } else {
@@ -605,7 +608,7 @@ export function normalizeChildren(vnode: VNode, children: unknown) {
     children = String(children)
     // force teleport children to array so it can be moved around
     if (shapeFlag & ShapeFlags.TELEPORT) {
-      // teleport组件
+      // teleport会对单文本children转为array
 
       type = ShapeFlags.ARRAY_CHILDREN // array children 0b00010000
       // children转为文本vnode

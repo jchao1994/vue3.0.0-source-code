@@ -3,6 +3,7 @@ import { isNoUnitNumericStyleProp } from './domAttrConfig'
 
 export type NormalizedStyle = Record<string, string | number>
 
+// 将style统一处理成object
 export function normalizeStyle(value: unknown): NormalizedStyle | undefined {
   if (isArray(value)) {
     const res: Record<string, string | number> = {}
@@ -37,6 +38,7 @@ export function parseStringStyle(cssText: string): NormalizedStyle {
   return ret
 }
 
+// 将对象格式的style处理成字符串，用于拼接
 export function stringifyStyle(styles: NormalizedStyle | undefined): string {
   let ret = ''
   if (!styles) {
@@ -56,6 +58,7 @@ export function stringifyStyle(styles: NormalizedStyle | undefined): string {
   return ret
 }
 
+// 格式化处理class，统一转为字符串
 export function normalizeClass(value: unknown): string {
   let res = ''
   if (isString(value)) {

@@ -32,4 +32,4 @@ const VOID_TAGS =
 
 export const isHTMLTag = /*#__PURE__*/ makeMap(HTML_TAGS)
 export const isSVGTag = /*#__PURE__*/ makeMap(SVG_TAGS)
-export const isVoidTag = /*#__PURE__*/ makeMap(VOID_TAGS)
+export const isVoidTag = /*#__PURE__*/ makeMap(VOID_TAGS) // 单标签
