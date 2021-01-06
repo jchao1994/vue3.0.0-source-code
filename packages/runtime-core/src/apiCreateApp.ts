@@ -276,7 +276,7 @@ export function createAppAPI<HostElement>(
           // 将根容器绑定到app._container上
           app._container = rootContainer
           // !非空断言
-          // 返回的是什么???作用???
+          // 返回的是代理，这个代理是用来取值的
           return vnode.component!.proxy
         } else if (__DEV__) {
           // dev模式下重复挂载报警

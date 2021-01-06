@@ -925,9 +925,8 @@ function baseCreateRenderer(
       dynamicChildren = null
     }
 
-    // 下面两步 patchFlag和dynamicChildren 是Vue3.x模板编译中生成的，用于优化patch过程
+    // patchFlag是Vue3.x模板编译中生成的，用于优化props class style的patch过程
     // 如果没有走模板编译，只能完整diff，同Vue2.x，相当于没有优化
-
     // patchFlag是在模板编译过程中根据动态属性生成的，只对标记中的属性进行patch，跳过静态属性，优化patch过程
     // 这个Vue3.x的优化，最小化动态部分，只patch更新动态部分，静态部分全部跳过
     if (patchFlag > 0) {
@@ -1027,8 +1026,9 @@ function baseCreateRenderer(
     }
 
     const areChildrenSVG = isSVG && n2.type !== 'foreignObject'
-    // dynamicChildren这是怎么生成的???
-    // 是不是n1子树的动态部分都绑定到n1上，形成块级区域，这样就不用递归children，也是优化的一部分???
+    // dynamicChildren是block vnode上绑定的动态子children部分以及子block vnode，由原来的层层children递归变成层层block vnode递归，减少了大量递归遍历
+    // 模板编译过程中会生成createBlock代码，在执行render函数时执行createBlock生成block vnode
+    // 只patch动态子children，提高性能
     if (dynamicChildren) {
       patchBlockChildren(
         n1.dynamicChildren!,
@@ -1067,11 +1067,11 @@ function baseCreateRenderer(
   // The fast path for blocks.
   // 对dynamicChildren的每一个对新老child，获取实际的父容器，做新老vnode的patch
   // 这里的更新都是更新到child的父节点一般都不是n1，所以需要获取其父节点
-  // 将动态children都绑定到n1上，这样就不需要递归patch了，提高性能???
+  // 只有block vnode上才有dynamicChildren指向动态子children，只需要遍历动态子children就完成了整个vnode的patch
   const patchBlockChildren: PatchBlockChildrenFn = (
     oldChildren, // n1.dynamicChildren
     newChildren, // dynamicChildren
-    fallbackContainer, // 容器
+    fallbackContainer, // n1.el
     parentComponent,
     parentSuspense,
     isSVG
@@ -1081,6 +1081,7 @@ function baseCreateRenderer(
       const newVNode = newChildren[i]
       // Determine the container (parent element) for the patch.
       // 获取实际的父容器
+      // 因为block vnode的dynamicChildren是跨层级的，所以每个child的父容器需要正确获取
       const container =
         // - In the case of a Fragment, we need to provide the actual parent
         // of the Fragment itself so it can move its children.
@@ -1097,7 +1098,8 @@ function baseCreateRenderer(
           ? hostParentNode(oldVNode.el!)!
           : // In other cases, the parent container is not actually used so we
             // just pass the block element here to avoid a DOM parentNode call.
-            // 其他情况，直接用n1的父dom
+            // 其他情况，直接用n1.el防止调用一个dom父节点，实际上这个情况不存在
+            // 比如 <div key="1">111</div> => <div key="1">222</div> ，这种情况下替换文本也是需要正确的父容器，如果用n1.el不就错了吗???
             fallbackContainer
       patch(
         oldVNode,
@@ -1225,7 +1227,7 @@ function baseCreateRenderer(
       ) {
         // a stable fragment (template root or <template v-for>) doesn't need to
         // patch children order, but it may contain dynamicChildren.
-        // template的根 或 带v-for的template 是稳定的fragment，不需要patch children，但可能存在动态children
+        // template的根 或 带v-for的template 是稳定的fragment，不需要patch children，但可能存在动态children，这个动态children在执行render函数时已经提取出来了
         // 对dynamicChildren的每一个对新老child，获取实际的父容器，做新老vnode的patch
         patchBlockChildren(
           n1.dynamicChildren!,
@@ -1243,8 +1245,11 @@ function baseCreateRenderer(
         // for keyed & unkeyed, since they are compiler generated from v-for,
         // each child is guaranteed to be a block so the fragment will never
         // have dynamicChildren.
-        // keyed 或 unkeyed 或 手动添加的fragment
+        // keyed 或 unkeyed 或 手动添加的单个fragment
         // v-for模板编译过程中会将每个child处理成block，所以不存在dynamicChildren
+        // <fragment v-for="xxx in list"></fragment>
+        // 整个是一个block vnode，且每个v-for也是一个block vnode，也就是整个block vnode下每一个fragment都是一个block vnode
+        // 这种情况下没有必要走patchBlockChildren逻辑，因为不会跳过任何vnode的patch，反而需要做额外的获取实际父容器，并且会忽略key强行做复用导致出错
         patchChildren(
           n1,
           n2,
@@ -1684,6 +1689,7 @@ function baseCreateRenderer(
   // dom diff核心算法进行了性能优化，用到了最长增长子序列，时间复杂度缩短至nlogn，Vue2.x为n^2
   // 同时，新算法已包含Vue2.x中没有优化到的边界情况，提升了性能
   // 这里的逻辑结束之后，表示子树的patch已经全部完成，同时也已经更新到真实dom(这里真实dom也会等待异步更新，浏览器内置)
+  // 有dynamicChildren的情况会直接patchBlockChildren逻辑，而不会走patchChildren逻辑
   const patchChildren: PatchChildrenFn = (
     n1, // 老vnode
     n2, // 新vnode
@@ -1701,6 +1707,8 @@ function baseCreateRenderer(
     const { patchFlag, shapeFlag } = n2
     // fast path
     // 优先处理patchFlag，模板编译过程中根据动态属性生成的标志，可以优化patch过程，不走下面所有情况的判断patch过程
+    // 先处理带patchFlag的fragment
+    // fragment默认都会是block vnode，所以不能在block vnode的遍历上进行动态children的遍历patch优化，只能在这里通过patchFlag优化
     if (patchFlag > 0) {
       if (patchFlag & PatchFlags.KEYED_FRAGMENT) { // 1 << 7 带key的fragment 0b10000000
         // this could be either fully-keyed or mixed (some keyed some not)
@@ -1708,6 +1716,7 @@ function baseCreateRenderer(
         // 这里可能是全部keyed，也可能是部分
         // 有patchFlag意味着children一定是数组
         // 走dom diff核心逻辑，进行children的diff patch move
+        // 核心逻辑涉及到头尾四指针，头头尾尾，最长增长子序列，目的是为了最大可能地减少dom的移动，因为实际dom的操作会比虚拟dom耗性能得多
         patchKeyedChildren(
           c1 as VNode[],
           c2 as VNodeArrayChildren,
@@ -1722,7 +1731,9 @@ function baseCreateRenderer(
       } else if (patchFlag & PatchFlags.UNKEYED_FRAGMENT) { // 1 << 8 不带key的fragment
         // unkeyed
         // 不带key的patch children，不涉及diff核心算法逻辑
-        // 遍历每个child做patch，老children多的做卸载，新children多的做mount
+        // 遍历每个child做复用patch，老children多的做卸载，新children多的做mount
+        // 这里因为fragment作为碎片时，不用传入key，这种情况下一定是复用的，所以可以省去带key的整个逻辑，做到性能优化
+        // 只有涉及v-for的fragment才需要传入key
         patchUnkeyedChildren(
           c1 as VNode[],
           c2 as VNodeArrayChildren,
@@ -1736,6 +1747,10 @@ function baseCreateRenderer(
         return
       }
     }
+
+    // 到这里的全部是没有经过模板编译优化过的vnode
+    // 非fragment会在block vnode的dynamicChildren上完成patch操作，不会走到这里
+    // 带patchFlag的fragment会在上一步完成patch操作，也不会走到这里
 
     // children has 3 possibilities: text, array or no children.
     // children只有可能3种情况，文本 数组 null
@@ -1761,6 +1776,7 @@ function baseCreateRenderer(
         // 新children为null，对老的数组children做卸载
         if (shapeFlag & ShapeFlags.ARRAY_CHILDREN) {
           // two arrays, cannot assume anything, do full diff
+          // 不传入key的情况，key就是undefined，两个都没有key的vnode，其实也是相同的(同为undefined)，会进行复用，这里可能会导致复用出错
           patchKeyedChildren(
             c1 as VNode[],
             c2 as VNodeArrayChildren,
@@ -1802,7 +1818,7 @@ function baseCreateRenderer(
   }
 
   // 不带key的patch children，不涉及diff核心算法逻辑
-  // 遍历每个child做patch，老children多的做卸载，新children多的做mount
+  // 遍历每个child做复用patch，老children多的做卸载，新children多的做mount
   const patchUnkeyedChildren = (
     c1: VNode[], // 老children
     c2: VNodeArrayChildren, // 新children
@@ -1858,6 +1874,7 @@ function baseCreateRenderer(
   // Vue3.x算法实际上是对Vue2.x算法的补充，用最长增长子序列补充了一些边界情况的性能优化
   // 当老children两端都是需要删除的vnode，此时Vue2.x会对中间可patch的vnode都做移动，而Vue3.x可以优化出不需要移动的vnode
   // Vue2.x diff算法的时间复杂度为n^2，Vue3.x通过最长增长子序列缩短成了nlogn???
+  // 核心逻辑涉及到头尾四指针，头头尾尾，最长增长子序列，目的是为了最大可能地减少dom的移动，因为实际dom的操作会比虚拟dom耗性能得多
 
   // [1,2,3,4,5,6,7,8,9,10] => [1,9,11,7,3,4,5,6,2,10]
   // Vue2.x 移动 2 9 7  新增 11  卸载 8
@@ -1895,6 +1912,7 @@ function baseCreateRenderer(
         ? cloneIfMounted(c2[i] as VNode)
         : normalizeVNode(c2[i]))
       // type和key相同，做patch
+      // 不传入key的情况，key就是undefined，两个都没有key的vnode，其实也是相同的(同为undefined)，会进行复用，这里可能会导致复用出错
       if (isSameVNodeType(n1, n2)) {
         patch(
           n1,
@@ -2553,6 +2571,7 @@ function baseCreateRenderer(
       patch(container._vnode || null, vnode, container)
     }
     // 遍历PostFlushCbs队列并清空
+    // 同步render结束之后，需要最后遍历执行一遍postFlushCbs队列，以免后面添加进去的回调没有执行
     flushPostFlushCbs()
     // container的_vnode标识最新的vnode
     container._vnode = vnode

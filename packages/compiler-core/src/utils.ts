@@ -38,6 +38,7 @@ import { Node } from '@babel/types'
 export const isBuiltInType = (tag: string, expected: string): boolean =>
   tag === expected || tag === hyphenate(expected)
 
+// teleport suspense keepAlive baseTransition
 export function isCoreComponent(tag: string): symbol | void {
   if (isBuiltInType(tag, 'Teleport')) {
     return TELEPORT
@@ -80,6 +81,8 @@ export const walkJS = (ast: Node, walker: Walker) => {
 }
 
 const nonIdentifierRE = /^\d|[^\$\w]/
+// 数字 $ _ 开头 => 返回true
+// 其他 => 返回false
 export const isSimpleIdentifier = (name: string): boolean =>
   !nonIdentifierRE.test(name)
 
@@ -89,8 +92,13 @@ export const isMemberExpression = (path: string): boolean => {
   return memberExpRE.test(path.trim())
 }
 
+// 根据整个value表达式的loc生成RHS的loc对象
+// 返回的loc
+// source指向loc.source.substr(offset, length)
+// start指向loc.start+offset的位置
+// end指向loc.start+offset+length的位置
 export function getInnerRange(
-  loc: SourceLocation,
+  loc: SourceLocation, // 整个value表达式的loc
   offset: number,
   length?: number
 ): SourceLocation {
@@ -114,11 +122,14 @@ export function getInnerRange(
   return newLoc
 }
 
+// 不影响原pos，返回一个克隆的pos
+// 返回的pos是解析完numberOfCharacters对应长度后的
 export function advancePositionWithClone(
   pos: Position,
   source: string,
   numberOfCharacters: number = source.length
 ): Position {
+  // 获取解析完numberOfCharacters之后的新的offset line column更新到pos中
   return advancePositionWithMutation(
     extend({}, pos),
     source,
@@ -128,22 +139,30 @@ export function advancePositionWithClone(
 
 // advance by mutation without cloning (for performance reasons), since this
 // gets called a lot in the parser
+// 获取解析完numberOfCharacters之后的新的offset line column更新到pos中
 export function advancePositionWithMutation(
-  pos: Position,
-  source: string,
+  pos: Position, // context
+  source: string, // context.source
   numberOfCharacters: number = source.length
 ): Position {
+  // 这次numberOfCharacters所占的行数
   let linesCount = 0
+  // 最后一次换行是numberOfCharacters中的第几个
+  // numberOfCharacters - lastNewLinePos就表示了 最后一行的字符串个数+1，也就是指向下一列
   let lastNewLinePos = -1
   for (let i = 0; i < numberOfCharacters; i++) {
+    // 换行
     if (source.charCodeAt(i) === 10 /* newline char code */) {
       linesCount++
       lastNewLinePos = i
     }
   }
 
+  // offset跳过当前numberOfCharacters
   pos.offset += numberOfCharacters
+  // 下一行
   pos.line += linesCount
+  // 下一列
   pos.column =
     lastNewLinePos === -1
       ? pos.column + numberOfCharacters
@@ -159,6 +178,7 @@ export function assert(condition: boolean, msg?: string) {
   }
 }
 
+// 找到node上指令name对应的属性对象
 export function findDir(
   node: ElementNode,
   name: string | RegExp,
@@ -233,12 +253,14 @@ export function isTemplateNode(
   )
 }
 
+// node是slot
 export function isSlotOutlet(
   node: RootNode | TemplateChildNode
 ): node is SlotOutletNode {
   return node.type === NodeTypes.ELEMENT && node.tagType === ElementTypes.SLOT
 }
 
+// 给node对应的props或者arguments[2]中插入prop属性对象
 export function injectProp(
   node: VNodeCall | RenderSlotCall,
   prop: Property,
@@ -289,10 +311,12 @@ export function injectProp(
   }
 }
 
+// 将组件名和指令名非 大小字母 数字 下划线 转换为 _ ，并在开头加上 _component_ _directive_
 export function toValidAssetId(
   name: string,
   type: 'component' | 'directive'
 ): string {
+  // \w => 大小字母 数字 下划线
   return `_${type}_${name.replace(/[^\w]/g, '_')}`
 }
 

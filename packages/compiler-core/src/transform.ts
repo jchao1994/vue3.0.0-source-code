@@ -107,8 +107,9 @@ export interface TransformContext extends Required<TransformOptions> {
   cache<T extends JSChildNode>(exp: T, isVNode?: boolean): CacheExpression | T
 }
 
+// 创建整个ast语法树对应的上下文context
 export function createTransformContext(
-  root: RootNode,
+  root: RootNode, // 解析完成的ast语法树
   {
     prefixIdentifiers = false,
     hoistStatic = false,
@@ -139,6 +140,7 @@ export function createTransformContext(
 
     // state
     root,
+    // 存储用到的API，用于按需引入
     helpers: new Set(),
     components: new Set(),
     directives: new Set(),
@@ -154,7 +156,7 @@ export function createTransformContext(
       vOnce: 0
     },
     parent: null,
-    currentNode: root,
+    currentNode: root, // 指向当前节点对象
     childIndex: 0,
 
     // methods
@@ -240,6 +242,7 @@ export function createTransformContext(
       return identifier
     },
     cache(exp, isVNode = false) {
+      // 创建 表达式 的对象，标记需要缓存
       return createCacheExpression(++context.cached, exp, isVNode)
     }
   }
@@ -259,12 +262,20 @@ export function createTransformContext(
   return context
 }
 
+// root  解析完成的ast语法树
+// root上每一个node(包括root自己)都有了自己的codegenNode，用于后续生成代码
 export function transform(root: RootNode, options: TransformOptions) {
+  // 创建整个ast语法树对应的上下文context
   const context = createTransformContext(root, options)
+  // 这里是对整个ast语法树进行处理，包括合并 分析props 更新patchFlag dynamicPropNames
+  // 最终让ast语法树上的每一个node(不包括root自己)都有自己的codegenNode，用于后续生成代码
   traverseNode(root, context)
+  // hoistStatic是什么，暂时不看???
   if (options.hoistStatic) {
     hoistStatic(root, context)
   }
+  // 给root创建codegenNode属性，用于后续生成代码
+  // ssr不走这里
   if (!options.ssr) {
     createRootCodegen(root, context)
   }
@@ -278,15 +289,18 @@ export function transform(root: RootNode, options: TransformOptions) {
   root.cached = context.cached
 }
 
+// 给root创建codegenNode属性，用于后续生成代码
 function createRootCodegen(root: RootNode, context: TransformContext) {
   const { helper } = context
   const { children } = root
   const child = children[0]
-  if (children.length === 1) {
+  if (children.length === 1) { // root的根节点不是fragment，child指向根节点，通常情况
     // if the single child is an element, turn it into a block.
     if (isSingleElementRoot(root, child) && child.codegenNode) {
       // single element root is never hoisted so codegenNode will never be
       // SimpleExpressionNode
+      // child是element，标记isBlock，并将child.codegenNode赋值到root.codegenNode上
+      // slot标签 IfNode ForNode 已经标记过isBlock了
       const codegenNode = child.codegenNode
       if (codegenNode.type === NodeTypes.VNODE_CALL) {
         codegenNode.isBlock = true
@@ -298,10 +312,12 @@ function createRootCodegen(root: RootNode, context: TransformContext) {
       // - single <slot/>, IfNode, ForNode: already blocks.
       // - single text node: always patched.
       // root codegen falls through via genNode()
+      // child没有codegenNode，root.codegenNode直接指向child
       root.codegenNode = child
     }
-  } else if (children.length > 1) {
+  } else if (children.length > 1) { // root的根节点是fragment
     // root has multiple nodes - return a fragment block.
+    // 创建type为 NodeTypes.VNODE_CALL 的对象，作为root.codegenNode
     root.codegenNode = createVNodeCall(
       context,
       helper(FRAGMENT),
@@ -314,11 +330,12 @@ function createRootCodegen(root: RootNode, context: TransformContext) {
       undefined,
       true
     )
-  } else {
+  } else { // 没有children，root也就不需要codegenNode
     // no children = noop. codegen will return null.
   }
 }
 
+// 标记context.parent和context.childIndex，递归遍历每一个child
 export function traverseChildren(
   parent: ParentNode,
   context: TransformContext
@@ -330,22 +347,36 @@ export function traverseChildren(
   for (; i < parent.children.length; i++) {
     const child = parent.children[i]
     if (isString(child)) continue
+    // context.parent标记当前child的parent
     context.parent = parent
+    // context.childIndex标记当前child在parent中的index
     context.childIndex = i
     context.onNodeRemoved = nodeRemoved
     traverseNode(child, context)
   }
 }
 
+// 这里是对整个ast语法树进行处理，包括合并 分析props 更新patchFlag dynamicPropNames
+// 最终让ast语法树上的每一个node都有自己的codegenNode，用于后续生成代码
 export function traverseNode(
-  node: RootNode | TemplateChildNode,
-  context: TransformContext
+  node: RootNode | TemplateChildNode, // 解析完成的ast语法树
+  context: TransformContext // 整个ast语法树对应的上下文context
 ) {
+  // 当前节点对象
   context.currentNode = node
   // apply transform plugins
   const { nodeTransforms } = context
   const exitFns = []
+  // [transformOnce,transformIf,transformFor,transformExpression,transformSlotOutlet,transformElement,trackSlotScopes,transformText]
+  // 对节点对象进行处理 v-once v-if v-for
   for (let i = 0; i < nodeTransforms.length; i++) {
+    // v-once => 返回值是函数，更新node.codegenNode的指向，标记需要缓存
+    // v-if => 返回值是数组，里面有处理v-if指向关系的回调，生成ifNode.codegenNode
+    // v-for => 返回值是函数，目的是等children都traverse之后处理 slot的key、fragment包裹、标记isBlock
+    // slot标签 => 没有返回值，执行这个方法，处理name和props，最后创建type为 NodeTypes.JS_CALL_EXPRESSION 的对象作为node.codegenNode
+    // 原生标签 | 组件 => 返回值是函数，目的是分析props children，更新shouldUseBlock patchFlag，最后创建type为 NodeTypes.VNODE_CALL 的对象作为node.codegenNode
+    // 带v-slot或#的 组件 | template，也就是具名插槽，context.scopes.vSlot计数加1，返回值函数onExit用于计数减1
+    // 处理文本child => 返回值是函数onExit，目的将所有连续的文本child合并并替换为type为 NodeTypes.TEXT_CALL 的对象，其codegenNode是 创建type为 NodeTypes.JS_CALL_EXPRESSION 的对象
     const onExit = nodeTransforms[i](node, context)
     if (onExit) {
       if (isArray(onExit)) {
@@ -354,24 +385,29 @@ export function traverseNode(
         exitFns.push(onExit)
       }
     }
+    // 更新node为最新的node对象
     if (!context.currentNode) {
       // node was removed
+      // v-else-if v-else会被移除
       return
     } else {
       // node may have been replaced
+      // v-if v-for会被替换
       node = context.currentNode
     }
   }
 
+  // 这里的node是经过上面一系列遍历之后的最新的node对象
+
   switch (node.type) {
-    case NodeTypes.COMMENT:
+    case NodeTypes.COMMENT: // 注释节点
       if (!context.ssr) {
         // inject import for the Comment symbol, which is needed for creating
         // comment nodes with `createVNode`
         context.helper(CREATE_COMMENT)
       }
       break
-    case NodeTypes.INTERPOLATION:
+    case NodeTypes.INTERPOLATION: // ???
       // no need to traverse, but we need to inject toString helper
       if (!context.ssr) {
         context.helper(TO_DISPLAY_STRING)
@@ -379,20 +415,25 @@ export function traverseNode(
       break
 
     // for container types, further traverse downwards
-    case NodeTypes.IF:
+    case NodeTypes.IF: // 只有v-if，v-else-if v-else不会走到这里
+      // 这里的node.branches应该只有v-if自己
+      // v-else-if v-else会在processIf过程中进行traverseNode(branch)
       for (let i = 0; i < node.branches.length; i++) {
         traverseNode(node.branches[i], context)
       }
       break
-    case NodeTypes.IF_BRANCH:
-    case NodeTypes.FOR:
+    case NodeTypes.IF_BRANCH: // v-if的branch
+    case NodeTypes.FOR: // v-for
     case NodeTypes.ELEMENT:
-    case NodeTypes.ROOT:
+    case NodeTypes.ROOT: // 根
+      // 标记context.parent和context.childIndex，递归遍历每一个child
       traverseChildren(node, context)
       break
   }
 
   // exit transforms
+  // traverse完node对应的整个树之后，遍历执行exitFns中的函数
+  // 这里的作用是生成每一个node的codegenNode，用于生成代码
   let i = exitFns.length
   while (i--) {
     exitFns[i]()
@@ -400,6 +441,8 @@ export function traverseNode(
 }
 
 export function createStructuralDirectiveTransform(
+  // v-if => /^(if|else|else-if)$/
+  // v-for => 'for'
   name: string | RegExp,
   fn: StructuralDirectiveTransform
 ): NodeTransform {
@@ -407,11 +450,13 @@ export function createStructuralDirectiveTransform(
     ? (n: string) => n === name
     : (n: string) => name.test(n)
 
+  // 返回值是exitFns数组，里面有处理v-if指向关系的回调，生成ifNode.codegenNode
   return (node, context) => {
     if (node.type === NodeTypes.ELEMENT) {
       const { props } = node
       // structural directive transforms are not concerned with slots
       // as they are handled separately in vSlot.ts
+      // 带v-slot的template节点对象不在这里处理
       if (node.tagType === ElementTypes.TEMPLATE && props.some(isVSlot)) {
         return
       }
@@ -424,6 +469,12 @@ export function createStructuralDirectiveTransform(
           // traverse itself in case it moves the node around
           props.splice(i, 1)
           i--
+          // processIf processFor 的返回值
+          // v-if 返回的processCodegen函数的作用是完善同一组 v-if v-else-if v-else 到 ifNode 对象
+          // ifNode.codegenNode 指向 v-if，通过 alternate 属性不断指向同组的下一个
+          // v-else-if v-else  没有返回值，processCodegen在fn执行过程中就进行了
+          // 也就是说，v-if在fn过程中没有执行processCodegen，而是放入exitFns中，后续应该会执行
+          // 而v-else-if v-else在fn过程中直接执行processCodegen
           const onExit = fn(node, prop, context)
           if (onExit) exitFns.push(onExit)
         }

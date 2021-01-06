@@ -27,6 +27,7 @@ export function normalizeStyle(value: unknown): NormalizedStyle | undefined {
 const listDelimiterRE = /;(?![^(]*\))/g
 const propertyDelimiterRE = /:(.+)/
 
+// 将用;连接的string属性值转换成object
 export function parseStringStyle(cssText: string): NormalizedStyle {
   const ret: NormalizedStyle = {}
   cssText.split(listDelimiterRE).forEach(item => {

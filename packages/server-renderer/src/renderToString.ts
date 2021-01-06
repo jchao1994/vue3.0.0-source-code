@@ -91,6 +91,7 @@ export function createBuffer() {
       appendable = isStringItem
       // 不是string，也不是array，就是promise
       // 只要buffer中有一个为promise，就标记hasAsync为true，getBuffer时就会Promise.all处理
+      // 当前层级一般都为string，嵌套组件会将子组件的buffer数组直接推入父组件的buffer数组中，最后会统一处理成整个html
       if (!isStringItem && !isArray(item)) {
         // promise
         hasAsync = true
@@ -99,6 +100,7 @@ export function createBuffer() {
   }
 }
 
+// 将buffer数组转为整个html返回
 function unrollBuffer(buffer: ResolvedSSRBuffer): string {
   let ret = ''
   for (let i = 0; i < buffer.length; i++) {
@@ -112,7 +114,18 @@ function unrollBuffer(buffer: ResolvedSSRBuffer): string {
   return ret
 }
 
-// 看到这里???
+// 先将vnode拼接字符串，推入buffer数组，最后将buffer数组拼接成整个html
+// 每个组件会有自己的buffer数组，子组件的buffer数组会存放在父组件的buffer素组中，形成嵌套，最后统一处理成整个html
+// suspense会直接忽略fallback，直接content
+// teleport做特殊处理，将每个teleport对应的target-html存放在context.__teleportBuffers中，没有拼接到最后的html中
+// 这里的context是vnode.appContext.provides[ssrContextKey]，也就是整个app的context
+// 也就是，这里返回整个不带teleport的html，以及context.__teleportBuffers上存储了teleport对应的target-html
+// Vue3.x与Vue2.x的用法有点不同
+// Vue2.x
+//    renderer.renderToString(app, (err, html) => { res.end(html) })
+//    renderer.renderToString(app).then(html => res.end(html))
+// Vue3.x，不支持传入回调
+//    renderer.renderToString(app).then(html => res.end(html))
 export async function renderToString(
   input: App | VNode, // 最终都是app对象，带use mixin component directive mount unmount provide方法
   context: SSRContext = {}
@@ -135,10 +148,16 @@ export async function renderToString(
   // input._context.provides[ssrContextKey] = context
   // vnode.appContext.provides[ssrContextKey] = context
   input.provide(ssrContextKey, context)
+  // 拿到根vnode的subTree对应的buffer数组
+  // vnode.appContext.provides[ssrContextKey].__teleportBuffers中也存放了每个teleport对应的target-buffer
+  // 也就是context.__teleportBuffers中也存放了每个teleport对应的target-buffer
   const buffer = await renderComponentVNode(vnode)
 
+  // context.teleports存放teleport相关的html
+  // target-html
   await resolveTeleports(context)
 
+  // 将buffer数组转为整个html返回
   return unrollBuffer(buffer)
 }
 
@@ -154,6 +173,8 @@ export function renderComponent(
   )
 }
 
+// 返回组件的subTree(也就是组件vue文件template的内容)的buffer数组
+// 或是 promise ，这里是针对defineAsyncComponent异步组件
 function renderComponentVNode(
   vnode: VNode, // 初始vnode
   parentComponent: ComponentInternalInstance | null = null
@@ -178,6 +199,7 @@ function renderComponentVNode(
 
 // 处理好instance.render后，就走到这里的逻辑
 // 客户端渲染生成render函数之后，就立马setupRenderEffect创建instance.update，也就是render effect了
+// 返回组件的subTree(也就是组件vue文件template的内容)的buffer数组
 function renderComponentSubTree(
   instance: ComponentInternalInstance
 ): ResolvedSSRBuffer | Promise<ResolvedSSRBuffer> {
@@ -187,20 +209,21 @@ function renderComponentSubTree(
   if (isFunction(comp)) { // 函数组件，无状态组件
     // renderComponentRoot(instance)会执行instance.render函数渲染subTree，得到subTree对应的vnode
     renderVNode(push, renderComponentRoot(instance), instance)
-  } else {
+  } else { // 状态组件，常规vue文件
+    // 没有render函数和ssrRender函数，进行模板编译，生成ssrRender函数
     if (!instance.render && !comp.ssrRender && isString(comp.template)) {
       comp.ssrRender = ssrCompile(comp.template, instance)
     }
 
-    if (comp.ssrRender) {
+    if (comp.ssrRender) { // 模板编译 | 通过组件选项传入render函数
       // optimized
       // set current rendering instance for asset resolution
       setCurrentRenderingInstance(instance)
       comp.ssrRender(instance.proxy, push, instance)
       setCurrentRenderingInstance(null)
-    } else if (instance.render) {
+    } else if (instance.render) { // setup返回render函数
       renderVNode(push, renderComponentRoot(instance), instance)
-    } else {
+    } else { // 其他情况，报错
       warn(
         `Component ${
           comp.name ? `${comp.name} ` : ``
@@ -223,6 +246,7 @@ function ssrCompile(
   template: string,
   instance: ComponentInternalInstance
 ): SSRRenderFunction {
+  // 缓存模板编译结果，也就是ssrRender函数
   const cached = compileCache[template]
   if (cached) {
     return cached
@@ -252,6 +276,7 @@ function ssrCompile(
   return (compileCache[template] = Function('require', code)(require))
 }
 
+// 将vnode拼接成字符串推入buffer数组
 function renderVNode(
   push: PushFn,
   vnode: VNode, // subTree对应的vnode
@@ -279,15 +304,25 @@ function renderVNode(
       break
     default:
       if (shapeFlag & ShapeFlags.ELEMENT) { // 原生dom
+        // 将起始标签 props 作用域id children 结束标签推入buffer数组中
         renderElementVNode(push, vnode, parentComponent)
       } else if (shapeFlag & ShapeFlags.COMPONENT) { // 组件
+        // 返回组件的subTree(也就是组件vue文件template的内容)的buffer数组
+        // 或是 promise ，这里是针对defineAsyncComponent异步组件
         push(renderComponentVNode(vnode, parentComponent))
       } else if (shapeFlag & ShapeFlags.TELEPORT) { // teleport
+        // target可用
+        //    父buffer中就是<!--teleport start--><!--teleport end-->
+        //    appContext.provides[ssrContextKey].__teleportBuffers[target]就是teleport自身的buffer数组
+        // target不可用
+        //    父buffer中就是<!--teleport start-->teleport自身的buffer数组<!--teleport end-->
+        //    appContext.provides[ssrContextKey].__teleportBuffers[target]就是<!---->
         renderTeleportVNode(push, vnode, parentComponent)
       } else if (shapeFlag & ShapeFlags.SUSPENSE) { // suspense
+        // 直接render suspense.content，忽略fallback，因为服务端无需展示fallback
         renderVNode(
           push,
-          normalizeSuspenseChildren(vnode).content,
+          normalizeSuspenseChildren(vnode).content, // content
           parentComponent
         )
       } else {
@@ -300,6 +335,7 @@ function renderVNode(
   }
 }
 
+// 遍历children，执行renderVNode，push到buffer数组中
 export function renderVNodeChildren(
   push: PushFn,
   children: VNodeArrayChildren,
@@ -310,6 +346,7 @@ export function renderVNodeChildren(
   }
 }
 
+// 原生dom的html拼接，将起始标签 props 作用域id children 结束标签推入buffer数组中
 function renderElementVNode(
   push: PushFn,
   vnode: VNode,
@@ -344,7 +381,7 @@ function renderElementVNode(
 
   // 拼接>后形成完成的起始标签，推入buffer数组中
   push(openTag + `>`)
-  // tag不是单标签元素，拼接children和结束标签
+  // tag不是单标签元素，拼接children和结束标签，推入buffer数组中
   if (!isVoidTag(tag)) {
     let hasChildrenOverride = false
     // 将innerHTML textContent textarea的value推入buffer数组
@@ -366,7 +403,7 @@ function renderElementVNode(
       if (shapeFlag & ShapeFlags.TEXT_CHILDREN) { // 文本children
         push(escapeHtml(children as string))
       } else if (shapeFlag & ShapeFlags.ARRAY_CHILDREN) { // 数组children
-        // 看到这里???
+        // 遍历children，执行renderVNode，push到buffer数组中
         renderVNodeChildren(
           push,
           children as VNodeArrayChildren,
@@ -374,6 +411,7 @@ function renderElementVNode(
         )
       }
     }
+    // 结束标签推入buffer数组中
     push(`</${tag}>`)
   }
 }
@@ -399,23 +437,40 @@ function applySSRDirectives(
   return mergeProps(rawProps || {}, ...toMerge)
 }
 
+// target可用
+//    父buffer中就是<!--teleport start--><!--teleport end-->
+//    appContext.provides[ssrContextKey].__teleportBuffers[target]就是teleport自身的buffer数组
+// target不可用
+//    父buffer中就是<!--teleport start-->teleport自身的buffer数组<!--teleport end-->
+//    appContext.provides[ssrContextKey].__teleportBuffers[target]就是<!---->
 function renderTeleportVNode(
   push: PushFn,
   vnode: VNode,
   parentComponent: ComponentInternalInstance
 ) {
+  // 目标容器
   const target = vnode.props && vnode.props.to
+  // 目标容器是否不可用
   const disabled = vnode.props && vnode.props.disabled
+  // 服务端渲染renderToString中teleport必须要有to属性指向目标容器，否则就忽略teleport
+  // 而客户端渲染会自动降级到使用父vnode对应的el作为容器
   if (!target) {
     warn(`[@vue/server-renderer] Teleport is missing target prop.`)
     return []
   }
+  // to属性必须是string selector
   if (!isString(target)) {
     warn(
       `[@vue/server-renderer] Teleport target must be a query selector string.`
     )
     return []
   }
+  // target可用
+  //    父buffer中就是<!--teleport start--><!--teleport end-->
+  //    appContext.provides[ssrContextKey].__teleportBuffers[target]就是teleport自身的buffer数组
+  // target不可用
+  //    父buffer中就是<!--teleport start-->teleport自身的buffer数组<!--teleport end-->
+  //    appContext.provides[ssrContextKey].__teleportBuffers[target]就是<!---->
   ssrRenderTeleport(
     push,
     push => {
@@ -431,12 +486,16 @@ function renderTeleportVNode(
   )
 }
 
+// context.teleports存放teleport相关的html
+// target-html
 async function resolveTeleports(context: SSRContext) {
+  // 处理teleport的buffer数组
   if (context.__teleportBuffers) {
     context.teleports = context.teleports || {}
     for (const key in context.__teleportBuffers) {
       // note: it's OK to await sequentially here because the Promises were
       // created eagerly in parallel.
+      // 将buffer数组转为整个html返回
       context.teleports[key] = unrollBuffer(
         await Promise.all(context.__teleportBuffers[key])
       )

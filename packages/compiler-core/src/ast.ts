@@ -515,12 +515,13 @@ export const locStub: SourceLocation = {
   end: { line: 1, column: 1, offset: 0 }
 }
 
+// 返回ast语法树根对象
 export function createRoot(
   children: TemplateChildNode[],
   loc = locStub
 ): RootNode {
   return {
-    type: NodeTypes.ROOT,
+    type: NodeTypes.ROOT, // 根对象
     children,
     helpers: [],
     components: [],
@@ -534,6 +535,7 @@ export function createRoot(
   }
 }
 
+// 创建type为 NodeTypes.VNODE_CALL 的对象
 export function createVNodeCall(
   context: TransformContext | null,
   tag: VNodeCall['tag'],
@@ -548,23 +550,34 @@ export function createVNodeCall(
 ): VNodeCall {
   if (context) {
     if (isBlock) {
+      // context.helpers.add(OPEN_BLOCK)
       context.helper(OPEN_BLOCK)
+      // context.helpers.add(CREATE_BLOCK)
       context.helper(CREATE_BLOCK)
     } else {
+      // context.helpers.add(CREATE_VNODE)
       context.helper(CREATE_VNODE)
     }
     if (directives) {
+      // context.helpers.add(WITH_DIRECTIVES)
       context.helper(WITH_DIRECTIVES)
     }
   }
 
   return {
     type: NodeTypes.VNODE_CALL,
+    // string
     tag,
+    // 通常情况 => type为NodeTypes.JS_OBJECT_EXPRESSION的对象
+    // 有v-bind v-on对象语法 => type为NodeTypes.JS_CALL_EXPRESSION的对象
     props,
+    // 组件slots array | 原生标签children array | v-for的children对象 type为NodeTypes.JS_CALL_EXPRESSION
     children,
+    // patchFlag字符串  string
     patchFlag,
+    // dynamicPropNames拼接成JSON字符串  string
     dynamicProps,
+    // type为NodeTypes.JS_ARRAY_EXPRESSION的对象
     directives,
     isBlock,
     isForBlock,
@@ -572,6 +585,7 @@ export function createVNodeCall(
   }
 }
 
+// 创建type为NodeTypes.JS_ARRAY_EXPRESSION的对象
 export function createArrayExpression(
   elements: ArrayExpression['elements'],
   loc: SourceLocation = locStub
@@ -583,6 +597,7 @@ export function createArrayExpression(
   }
 }
 
+// 创建type为NodeTypes.JS_OBJECT_EXPRESSION的对象
 export function createObjectExpression(
   properties: ObjectExpression['properties'],
   loc: SourceLocation = locStub
@@ -594,6 +609,7 @@ export function createObjectExpression(
   }
 }
 
+// 创建type为NodeTypes.JS_PROPERTY的对象
 export function createObjectProperty(
   key: Property['key'] | string,
   value: Property['value']
@@ -606,6 +622,7 @@ export function createObjectProperty(
   }
 }
 
+// 创建type为NodeTypes.SIMPLE_EXPRESSION的对象
 export function createSimpleExpression(
   content: SimpleExpressionNode['content'],
   isStatic: SimpleExpressionNode['isStatic'],
@@ -649,8 +666,14 @@ type InferCodegenNodeType<T> = T extends typeof RENDER_SLOT
   ? RenderSlotCall
   : CallExpression
 
+// 创建type为 NodeTypes.JS_CALL_EXPRESSION 的对象
 export function createCallExpression<T extends CallExpression['callee']>(
+  // v-if | v-else-if 的注释对象 => _createCommentVNode
+  // v-for的children => _renderList
+  // 文本child => _createTextVnode
   callee: T,
+  // v-if | v-else-if 的注释对象 => [ __DEV__ ? '"v-if"' : '""', 'true' ]
+  // v-for的children对象 => [list变量对象(NodeTypes.SIMPLE_EXPRESSION), list对应的对象(NodeTypes.JS_FUNCTION_EXPRESSION)]
   args: CallExpression['arguments'] = [],
   loc: SourceLocation = locStub
 ): InferCodegenNodeType<T> {
@@ -662,6 +685,7 @@ export function createCallExpression<T extends CallExpression['callee']>(
   } as any
 }
 
+// 创建type为NodeTypes.JS_FUNCTION_EXPRESSION的对象
 export function createFunctionExpression(
   params: FunctionExpression['params'],
   returns: FunctionExpression['returns'] = undefined,
@@ -679,22 +703,25 @@ export function createFunctionExpression(
   }
 }
 
+// 创建type为 NodeTypes.JS_CONDITIONAL_EXPRESSION 的对象
 export function createConditionalExpression(
-  test: ConditionalExpression['test'],
-  consequent: ConditionalExpression['consequent'],
-  alternate: ConditionalExpression['alternate'],
+  test: ConditionalExpression['test'], // branch.condition
+  consequent: ConditionalExpression['consequent'], // createChildrenCodegenNode(branch, index, context)
+  alternate: ConditionalExpression['alternate'], // createCallExpression(context.helper(CREATE_COMMENT), [__DEV__ ? '"v-if"' : '""', 'true'])
   newline = true
 ): ConditionalExpression {
   return {
     type: NodeTypes.JS_CONDITIONAL_EXPRESSION,
-    test,
-    consequent,
-    alternate,
+    test, // branch.condition，也就是v-if或v-else=if的属性值value对象
+    consequent, // type为 NodeTypes.VNODE_CALL 的对象
+    alternate, // type为 NodeTypes.JS_CALL_EXPRESSION 的对象，标记 v-if v-else-if 结束的注释对象，用于等会替换为下一个v-else-if或v-else的branch对象对应的对象
     newline,
     loc: locStub
   }
 }
 
+// 创建 表达式 的对象，标记需要缓存
+// v-once
 export function createCacheExpression(
   index: number,
   value: JSChildNode,
@@ -729,6 +756,7 @@ export function createTemplateLiteral(
   }
 }
 
+// NodeTypes.JS_IF_STATEMENT
 export function createIfStatement(
   test: IfStatement['test'],
   consequent: IfStatement['consequent'],
@@ -765,6 +793,7 @@ export function createSequenceExpression(
   }
 }
 
+// v-slot失败备用分支
 export function createReturnStatement(
   returns: ReturnStatement['returns']
 ): ReturnStatement {

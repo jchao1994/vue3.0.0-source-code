@@ -36,10 +36,16 @@ export const DOMDirectiveTransforms: Record<string, DirectiveTransform> = {
   show: transformShow
 }
 
+// 1. 解析模板字符串，返回ast语法树
+// 2. 让解析完成的ast语法树上每一个node(包括root自己)都有了自己的codegenNode，用于后续生成代码
+// 3. 生成render函数代码并返回
 export function compile(
-  template: string,
+  template: string, // 模板字符串
   options: CompilerOptions = {}
 ): CodegenResult {
+  // 1. 解析模板字符串，返回ast语法树
+  // 2. 让解析完成的ast语法树上每一个node(包括root自己)都有了自己的codegenNode，用于后续生成代码
+  // 3. 生成render函数代码并返回
   return baseCompile(
     template,
     extend({}, parserOptions, options, {

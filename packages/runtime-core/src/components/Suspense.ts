@@ -385,7 +385,7 @@ function createSuspenseBoundary(
         parent = parent.parent
       }
       // no pending parent suspense, flush all jobs
-      // 没有正在pending的parent suspense，直接将当前suspense的effects推入postFlushCbs队列，等待异步更新时执行
+      // 没有正在pending的parent suspense(或当前suspense是最外层的suspense)，直接将当前suspense的effects推入postFlushCbs队列，等待异步更新时执行
       // 如果找到了正在pending的parent suspense，这里就不推入postFlushCbs队列，等到这个parent suspense时再推入
       if (!hasUnresolvedAncestor) {
         queuePostFlushCb(effects)
@@ -478,8 +478,9 @@ function createSuspenseBoundary(
         })
       }
 
-      // 什么情况下会有这个hydratedEl???
-      // 服务端渲染返回的html???
+      // 服务端渲染的hydrate过程中，vnode一定带el，因为服务端渲染返回了完整html，这里不重新生成el
+      // 这里hydratedEl暂存服务端返回的el，用于异步组件加载完成之后vnode.el仍为这个hydratedEl，并正确找到父容器和位置dom
+      // 如果异步组件加载完成之后有更新，这里的vnode.el会发生改变，所以需要对el做暂存处理
       const hydratedEl = instance.vnode.el
       // dep加1，等到promise.then再减1
       suspense.deps++
@@ -611,8 +612,7 @@ function hydrateSuspense(
   // need to construct a suspense boundary first
   // hydrate过程中也会加载异步组件，修改suspense.deps
   // result指向下一个老dom
-  // 这里即使node是fallback，也直接混合subTree，需要看一下renderToString中如何处理suspense的???
-  // renderToString中应该会完成整个suspense，如果这里还是fallback，说明异步加载组件失败了，这里也是直接混合subTree???
+  // renderToString会忽略fallback，直接加载context并返回拼接好的html，所以这里直接混合subTree就行了，同样忽略fallback
   // updateHOCHostEl保证这里的node一定对应的是suspense内部第一个非suspense的subTree
   // 也就是如果是嵌套的suspense，那么每个suspense的node都指向同一个dom，而subTree会层层往下取，直到第一个非suspense的subTree
   const result = hydrateNode(
@@ -653,6 +653,8 @@ export function normalizeSuspenseChildren(
   }
 }
 
+// suspense已经resolve完成，就和普通一样，直接推入postFlushCbs队列，等到异步更新时执行
+// suspense还没有resolve，就把回调推入suspense.effects，等到suspense resolve时会将suspense.effects推入postFlushCbs队列
 export function queueEffectWithSuspense(
   fn: Function | Function[],
   suspense: SuspenseBoundary | null

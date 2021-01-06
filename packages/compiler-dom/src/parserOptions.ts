@@ -37,6 +37,7 @@ export const parserOptions: ParserOptions = {
   },
 
   // https://html.spec.whatwg.org/multipage/parsing.html#tree-construction-dispatcher
+  // 获取命名空间
   getNamespace(tag: string, parent: ElementNode | undefined): DOMNamespaces {
     let ns = parent ? parent.ns : DOMNamespaces.HTML
 
@@ -86,6 +87,7 @@ export const parserOptions: ParserOptions = {
   },
 
   // https://html.spec.whatwg.org/multipage/parsing.html#parsing-html-fragments
+  // 获取textMode
   getTextMode({ tag, ns }: ElementNode): TextModes {
     if (ns === DOMNamespaces.HTML) {
       if (tag === 'textarea' || tag === 'title') {

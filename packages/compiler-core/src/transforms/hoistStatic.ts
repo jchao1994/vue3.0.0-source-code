@@ -34,7 +34,7 @@ export function isSingleElementRoot(
   return (
     children.length === 1 &&
     child.type === NodeTypes.ELEMENT &&
-    !isSlotOutlet(child)
+    !isSlotOutlet(child) // 不是slot标签
   )
 }
 

@@ -110,6 +110,7 @@ export function createHydrationFunctions(
     // 3 文本节点
     // 8 注释节点
     const domType = node.nodeType
+    // hydrate中的vnode都是带el的，因为服务端渲染总是会返回完整的html
     vnode.el = node
 
     let nextNode: Node | null = null

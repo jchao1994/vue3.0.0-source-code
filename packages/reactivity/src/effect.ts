@@ -286,14 +286,14 @@ export function trigger(
         oldTarget
       })
     }
-    // 只有render effect和computed effect有scheduler方法
+    // 只有render effect和computed effect(watch effect也是用computed effect实现的)有scheduler方法
     // computed effect  执行scheduler会通知依赖computed的effect(这个effect也会走到这里，并放入queue队列，走异步更新)更新，在更新过程中重新取computed的value才会触发computed的重新计算并缓存
     // render effect  scheduler也就是queueJob，也就是在queue队列中添加effect，然后queueFlush(内部是通过nextTick进行异步渲染)
     // 这里一定是把所有的render effect都放入queue(带去重，避免重复更新)之后，才会异步更新
     // 由于computed effect的scheduler只是通知它自己的依赖effect进行异步更新，所以computed effect的scheduler本身是同步执行的，没有问题
     if (effect.options.scheduler) {
       effect.options.scheduler(effect)
-    } else {
+    } else {1
       effect()
     }
   }
@@ -302,7 +302,8 @@ export function trigger(
   // can be invalidated before any normal effects that depend on them are run.
   // Vue3.0.0  这里computed必须先执行，这样在后面依赖这个computed的effect中就可以获取到正确的值了，否则还会用前一个缓存的值
   // 其实上面说的情况不存在，这里无所谓先后，在Vue3.0.3中也将两者合并在一起了
-  // 因为最后的结果总是将所有render effect放入queue队列进行异步更新，而异步更新的顺序是根据effect的id来排序的
+  // 因为最后的结果总是将所有render effect放入queue队列进行异步更新，而推入异步队列queue之前，computed effect的dirty已经重置为true了
+  // 所以即使异步更新时render effect 或 watch effect(异步watch)先更新，此时去取computed的value，也会重新计算
   computedRunners.forEach(run)
   effects.forEach(run)
 }

@@ -25,6 +25,7 @@ interface WIPEntry {
 }
 
 // phase 1
+// suspense
 export function ssrTransformSuspense(
   node: ComponentNode,
   context: TransformContext
@@ -37,6 +38,7 @@ export function ssrTransformSuspense(
       }
       wipMap.set(node, wipEntry)
       wipEntry.slotsExp = buildSlots(node, context, (_props, children, loc) => {
+        // NodeTypes.JS_FUNCTION_EXPRESSION
         const fn = createFunctionExpression(
           [],
           undefined, // no return, assign body later
@@ -55,6 +57,7 @@ export function ssrTransformSuspense(
 }
 
 // phase 2
+// suspense
 export function ssrProcessSuspense(
   node: ComponentNode,
   context: SSRTransformContext
@@ -70,7 +73,16 @@ export function ssrProcessSuspense(
     fn.body = processChildrenAsStatement(children, context)
   }
   // _push(ssrRenderSuspense(slots))
+  // <suspense>aaa</suspense>
+  // =>
+  // _ssrRenderSuspense(_push, {
+  //   default: () => {
+  //     _push(`aaa`)
+  //   },
+  //   _: 1 /* STABLE */
+  // })
   context.pushStatement(
+    // NodeTypes.JS_CALL_EXPRESSION
     createCallExpression(context.helper(SSR_RENDER_SUSPENSE), [
       `_push`,
       slotsExp

@@ -622,6 +622,7 @@ let compile: CompileFunction | undefined
  * For runtime-dom to register the compiler.
  * Note the exported method uses any to avoid d.ts relying on the compiler types.
  */
+// 执行_compile这个函数就会走编译逻辑，返回render函数
 export function registerRuntimeCompiler(_compile: any) {
   compile = _compile
 }
@@ -633,6 +634,7 @@ function finishComponentSetup(
   instance: ComponentInternalInstance,
   isSSR: boolean
 ) {
+  // 组件选项
   const Component = instance.type as ComponentOptions
 
   // template / render function normalization

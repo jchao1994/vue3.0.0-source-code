@@ -29,18 +29,23 @@ import { validateBrowserExpression } from '../validateExpression'
 
 const isLiteralWhitelisted = /*#__PURE__*/ makeMap('true,false,null,this')
 
+// 处理{{}}Mustache语法 非v-for的指令属性值对象 动态指令属性名的属性名对象
+// 给node中的变量添加前缀 _ctx.
+// 将node转换成NodeTypes.COMPOUND_EXPRESSION，或保持原node
 export const transformExpression: NodeTransform = (node, context) => {
-  if (node.type === NodeTypes.INTERPOLATION) {
+  if (node.type === NodeTypes.INTERPOLATION) { // {{}}Mustache语法
     node.content = processExpression(
       node.content as SimpleExpressionNode,
       context
     )
   } else if (node.type === NodeTypes.ELEMENT) {
     // handle directives on element
+    // 处理非v-for的指令属性值对象
+    // 处理动态指令属性名的属性名对象
     for (let i = 0; i < node.props.length; i++) {
       const dir = node.props[i]
       // do not process for v-on & v-for since they are special handled
-      if (dir.type === NodeTypes.DIRECTIVE && dir.name !== 'for') {
+      if (dir.type === NodeTypes.DIRECTIVE && dir.name !== 'for') { // 非v-for
         const exp = dir.exp
         const arg = dir.arg
         // do not process exp if this is v-on:arg - we need special handling
@@ -48,7 +53,7 @@ export const transformExpression: NodeTransform = (node, context) => {
         if (
           exp &&
           exp.type === NodeTypes.SIMPLE_EXPRESSION &&
-          !(dir.name === 'on' && arg)
+          !(dir.name === 'on' && arg) // 非v-on
         ) {
           dir.exp = processExpression(
             exp,
@@ -57,7 +62,7 @@ export const transformExpression: NodeTransform = (node, context) => {
             dir.name === 'slot'
           )
         }
-        if (arg && arg.type === NodeTypes.SIMPLE_EXPRESSION && !arg.isStatic) {
+        if (arg && arg.type === NodeTypes.SIMPLE_EXPRESSION && !arg.isStatic) { // 动态指令属性名
           dir.arg = processExpression(arg, context)
         }
       }
@@ -76,6 +81,8 @@ interface PrefixMeta {
 // Important: since this function uses Node.js only dependencies, it should
 // always be used with a leading !__BROWSER__ check so that it can be
 // tree-shaken from the browser build.
+// 给node中的变量添加前缀 _ctx.
+// 将node转换成NodeTypes.COMPOUND_EXPRESSION，或保持原node
 export function processExpression(
   node: SimpleExpressionNode,
   context: TransformContext,
@@ -99,15 +106,15 @@ export function processExpression(
   const rawExp = node.content
   // bail on parens to prevent any possible function invocations.
   const bailConstant = rawExp.indexOf(`(`) > -1
-  if (isSimpleIdentifier(rawExp)) {
+  if (isSimpleIdentifier(rawExp)) { // 数字 $ _ 开头，处理之后直接返回node
     if (
       !asParams &&
       !context.identifiers[rawExp] &&
       !isGloballyWhitelisted(rawExp) &&
       !isLiteralWhitelisted(rawExp)
-    ) {
+    ) { // 添加前缀 _ctx.
       node.content = `_ctx.${rawExp}`
-    } else if (!context.identifiers[rawExp] && !bailConstant) {
+    } else if (!context.identifiers[rawExp] && !bailConstant) { // 标记isConstant
       // mark node constant for hoisting unless it's referring a scope variable
       node.isConstant = true
     }
@@ -123,6 +130,7 @@ export function processExpression(
   const source = asRawStatements
     ? ` ${rawExp} `
     : `(${rawExp})${asParams ? `=>{}` : ``}`
+  // 解析source得到对应的ast
   try {
     ast = parseJS(source, {
       plugins: [
@@ -153,6 +161,7 @@ export function processExpression(
     ids.some(id => id.start === node.start)
 
   // walk the AST and look for identifiers that need to be prefixed with `_ctx.`.
+  // 给ast中需要的变量添加前缀 _ctx.
   walkJS(ast, {
     enter(node: Node & PrefixMeta, parent) {
       if (node.type === 'Identifier') {
@@ -240,6 +249,7 @@ export function processExpression(
     }
     const source = rawExp.slice(start, end)
     children.push(
+      // NodeTypes.SIMPLE_EXPRESSION
       createSimpleExpression(
         id.name,
         false,
@@ -258,6 +268,7 @@ export function processExpression(
 
   let ret
   if (children.length) {
+    // NodeTypes.COMPOUND_EXPRESSION
     ret = createCompoundExpression(children, node.loc)
   } else {
     ret = node

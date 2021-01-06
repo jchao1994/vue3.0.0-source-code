@@ -164,6 +164,8 @@ let currentBlock: VNode[] | null = null
  *
  * @private
  */
+// 开始一个block，推入blockStack栈中，此时currentBlock指向新的[]
+// createBlock的执行时机是晚于内部children的createVnode，因为createVnode是createBlock的参数，参数会先执行
 export function openBlock(disableTracking = false) {
   blockStack.push((currentBlock = disableTracking ? null : []))
 }
@@ -201,6 +203,7 @@ export function setBlockTracking(value: number) {
  *
  * @private
  */
+// createBlock的执行时机是晚于内部children的createVnode，因为createVnode是createBlock的参数，参数会先执行
 export function createBlock(
   type: VNodeTypes | ClassComponent,
   props?: { [key: string]: any } | null,
@@ -217,12 +220,17 @@ export function createBlock(
     true /* isBlock: prevent a block from tracking itself */
   )
   // save current block children on the block vnode
+  // vnode.dynamicChildren存储了currentBlock
+  // 此时内部的children都已经完成了createVnode，并且动态的vnode已经添加到currentBlock中了
   vnode.dynamicChildren = currentBlock || EMPTY_ARR
   // close block
+  // 当前currentBlock完成收集，移除
   blockStack.pop()
+  // currentBlock指向当前block的父block
   currentBlock = blockStack[blockStack.length - 1] || null
   // a block is always going to be patched, so track it as a child of its
   // parent block
+  // 父block vnode的currentBlock(也就是dynamicChildren)中推入当前vnode block
   if (currentBlock) {
     currentBlock.push(vnode)
   }
@@ -234,6 +242,7 @@ export function isVNode(value: any): value is VNode {
 }
 
 // type和key都相同，认为时sameVNode
+// n1和n2都没有key，那就是都为undefined，也是相同key
 export function isSameVNodeType(n1: VNode, n2: VNode): boolean {
   if (
     __DEV__ &&
@@ -403,17 +412,23 @@ function _createVNode(
   // component nodes also should always be patched, because even if the
   // component doesn't need to update, it needs to persist the instance on to
   // the next vnode so that it can be properly unmounted later.
-  // 有patch flag说明在更新过程中需要进行patch
+  // 模板编译生成了patchFlag，说明是需要patch更新的
   // 组件node需要总是被patch，即使不需要更新，因为它需要保持instance到下一个vnode以用来unmount卸载
 
-  // 建立Block Tree???
+  // 建立Block Tree，把所有动态的children存放到最近一个父block对应的vnode.dynamicChildren上
+  // createBlock的执行时机是晚于内部children的createVnode，因为createVnode是createBlock的参数，参数会先执行
+  // createBlock会传入isBlockNode为true，这里的逻辑会跳过，直接返回vnode
+  // 最后的Block Tree是这样的，父block vnode的currentBlock(也就是dynamicChildren)存放了所有动态子vnode以及所有子block vnode，都是跨层级存储
+  // 一旦遇到下一个block vnode，接下里的存储都放到最新的block vnode上，父block vnode只存放新的block vnode
+  // 有了dynamicChildren，在patch过程中就可以避免递归遍历，所有的动态vnode都是绑定到block vnode上，而且只patch动态的部分，性能大大提升
+  // block => 根节点 v-if v-else-if v-else v-for(包括根fragment和每一项)
   if (
     shouldTrack > 0 &&
-    !isBlockNode &&
-    currentBlock &&
+    !isBlockNode && // 当前vnode不是block，在block vnode执行自己的createBlock时会将自身vnode推入父currentBlock中
+    currentBlock && // 指向最近一个父block vnode的currentBlock，最后存储到对应的vnode.dynamicChildren上
     // the EVENTS flag is only for hydration and if it is the only flag, the
     // vnode should not be considered dynamic due to handler caching.
-    patchFlag !== PatchFlags.HYDRATE_EVENTS && // 1 << 5 不是SSR 0b00100000
+    patchFlag !== PatchFlags.HYDRATE_EVENTS && // 1 << 5 如果hydrate不仅仅是处理events，那就是动态的，0b00100000
     (patchFlag > 0 ||
       shapeFlag & ShapeFlags.SUSPENSE || // 1 << 7 suspense组件
       shapeFlag & ShapeFlags.TELEPORT || // 1 << 6 teleport组件
