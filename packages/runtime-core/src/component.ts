@@ -327,7 +327,7 @@ const emptyAppContext = createAppContext()
 
 let uid = 0
 
-// 创建组件实例
+// 创建组件实例的工厂函数
 export function createComponentInstance(
   vnode: VNode, // 新初始vnode
   parent: ComponentInternalInstance | null, // 父组件实例

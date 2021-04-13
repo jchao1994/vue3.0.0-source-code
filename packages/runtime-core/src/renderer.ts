@@ -1492,6 +1492,7 @@ function baseCreateRenderer(
         // 这里的subTree指的是vue文件内部template中的内容
         // 这里会调用之前编译好的或传入的 render函数 生成vnode，然后将之前的初始化vnode的属性合并过来
         // 最终返回完整的vnode，之后会对这个vnode进行patch(也就是mount)，递归render子树并patch，也就完成了整个vue项目的初始化
+        // subTree 指的就是组件的内部树，从组件根节点开始
         const subTree = (instance.subTree = renderComponentRoot(instance))
         if (__DEV__) {
           endMeasure(instance, `render`)
@@ -1818,7 +1819,8 @@ function baseCreateRenderer(
   }
 
   // 不带key的patch children，不涉及diff核心算法逻辑
-  // 遍历每个child做复用patch，老children多的做卸载，新children多的做mount
+  // 取新老children的公共部分，相当于使用index进行配对，到patch中发现不是sameVnode，那进行 unmount老的 + mount新的 处理
+  // 遍历公共部分做复用patch，老children多的做卸载，新children多的做mount
   const patchUnkeyedChildren = (
     c1: VNode[], // 老children
     c2: VNodeArrayChildren, // 新children
@@ -1833,6 +1835,7 @@ function baseCreateRenderer(
     c2 = c2 || EMPTY_ARR
     const oldLength = c1.length
     const newLength = c2.length
+    // 取新老children的公共部分，相当于使用index进行配对，到patch中发现不是sameVnode，那进行 unmount老的 + mount新的 处理
     const commonLength = Math.min(oldLength, newLength)
     let i
     for (i = 0; i < commonLength; i++) {

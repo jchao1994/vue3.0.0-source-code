@@ -293,7 +293,7 @@ export function trigger(
     // 由于computed effect的scheduler只是通知它自己的依赖effect进行异步更新，所以computed effect的scheduler本身是同步执行的，没有问题
     if (effect.options.scheduler) {
       effect.options.scheduler(effect)
-    } else {1
+    } else {
       effect()
     }
   }

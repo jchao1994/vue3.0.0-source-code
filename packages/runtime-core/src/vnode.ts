@@ -303,6 +303,7 @@ export const createVNode = (__DEV__
 
 // 创建vnode虚拟dom并返回
 // 这里已经完成了组件类型二进制标志shapeFlag和children的处理
+// 创建vnode的工厂函数
 function _createVNode(
   type: VNodeTypes | ClassComponent | typeof NULL_DYNAMIC_COMPONENT, // 组件选项
   props: (Data & VNodeProps) | null = null,
