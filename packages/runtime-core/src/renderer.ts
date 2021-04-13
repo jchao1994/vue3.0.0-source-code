@@ -1873,7 +1873,7 @@ function baseCreateRenderer(
   // dom diff的核心，目的是尽可能只做patch，而不做dom的移动插入，最大程度的性能优化
   // Vue3.x算法实际上是对Vue2.x算法的补充，用最长增长子序列补充了一些边界情况的性能优化
   // 当老children两端都是需要删除的vnode，此时Vue2.x会对中间可patch的vnode都做移动，而Vue3.x可以优化出不需要移动的vnode
-  // Vue2.x diff算法的时间复杂度为n^2，Vue3.x通过最长增长子序列缩短成了nlogn???
+  // Vue2.x diff算法的时间复杂度为n，Vue3.x 最长增长子序列时间复杂度为nlogn
   // 核心逻辑涉及到头尾四指针，头头尾尾，最长增长子序列，目的是为了最大可能地减少dom的移动，因为实际dom的操作会比虚拟dom耗性能得多
 
   // [1,2,3,4,5,6,7,8,9,10] => [1,9,11,7,3,4,5,6,2,10]
@@ -2012,7 +2012,7 @@ function baseCreateRenderer(
     // [i ... e1 + 1]: a b [c d e] f g
     // [i ... e2 + 1]: a b [e d c h] f g
     // i = 2, e1 = 4, e2 = 5
-    // 新老children都还有
+    // 新老children都还有，diff算法核心
     else {
       const s1 = i // prev starting index // 老的起始index指针
       const s2 = i // next starting index // 新的起始index指针
@@ -2020,6 +2020,7 @@ function baseCreateRenderer(
       // 5.1 build key:index map for newChildren
       // 新children的key map，key-index
       // 1 2两步涉及的vnode的key不会对这里造成影响，不用管
+      // keyToNewIndexMap是存储key(nextChild.key)-value(nextChild的index)的map结构
       const keyToNewIndexMap: Map<string | number, number> = new Map()
       for (i = s2; i <= e2; i++) {
         const nextChild = (c2[i] = optimized
@@ -2041,7 +2042,7 @@ function baseCreateRenderer(
       // matching nodes & remove nodes that are no longer present
       let j
       let patched = 0 // 已patch的数量
-      const toBePatched = e2 - s2 + 1 // 需要patch的数量
+      const toBePatched = e2 - s2 + 1 // 需要patch的数量，也就是剩余nextChild的数量
       let moved = false // 是否需要移动位置
       // used to track whether any node has moved
       let maxNewIndexSoFar = 0 // 标记前一个需要移动的vnode的位置，根据新老vnode的相对位置来判断是否需要移动
@@ -2066,13 +2067,14 @@ function baseCreateRenderer(
           unmount(prevChild, parentComponent, parentSuspense, true)
           continue
         }
+        // newIndex 指向老child对应的新child的index
         let newIndex
         if (prevChild.key != null) {
           // 老child有key，找到相同的key的新child的index
           newIndex = keyToNewIndexMap.get(prevChild.key)
         } else {
           // key-less node, try to locate a key-less node of the same type
-          // 先看下面???
+          // 老child没有key，那就遍历剩下的新child，如果找到相同的节点，就返回新child的index
           for (j = s2; j <= e2; j++) {
             if (
               newIndexToOldIndexMap[j - s2] === 0 &&
@@ -2090,8 +2092,12 @@ function baseCreateRenderer(
           // 老vnode有对应的新vnode，判断新vnode是否需要移动，然后做新老patch更新
 
           // 更新newIndexToOldIndexMap, newIndex - s2 对应 oldIndex + 1
+          // 由于newIndexToOldIndexMap是数组，所以索引必须从0开始，必须用 newIndex - s2
+          // 而默认值都为0，所以有值的情况必须从1开始，必须用 oldIndex + 1，这里的 oldIndex + 1 仅仅用于获取最长增长子序列，只需要有正确的相对大小即可
           newIndexToOldIndexMap[newIndex - s2] = i + 1
           // abc => bac
+          // 相对位置移动，这里标记的 moved 是整个老children的，不是单独的
+          // 后续会根据这个 moved 标志对移动做统一处理
           if (newIndex >= maxNewIndexSoFar) {
             // ac会走这里，不用移动
             maxNewIndexSoFar = newIndex
@@ -2119,6 +2125,7 @@ function baseCreateRenderer(
       // 如果需要移动，这里尽可能多得找到不需要移动的dom
       // increasingNewIndexSequence是这些不需要移动的dom的索引 newIndex - s2 的最长增长子序列
       // newIndexToOldIndexMap [2,9,11,8,5,6] => increasingNewIndexSequence [0,4,5]
+      // 最长增长子序列 基于 贪心+二分查找，时间复杂度为nlogn
       const increasingNewIndexSequence = moved
         ? getSequence(newIndexToOldIndexMap)
         : EMPTY_ARR
@@ -2148,7 +2155,7 @@ function baseCreateRenderer(
           // There is no stable subsequence (e.g. a reverse)
           // OR current node is not among the stable sequence
           // 稳定序列，也就是不需要移动的序列，已经在遍历老children的时候，也就是5.2步骤的时候处理完了，包括patch操作
-          // 这里只处理位置移动相关的操作
+          // 这里只需要处理位置移动相关的操作，因为不需要移动的情况只需要在 newIndexToOldIndexMap[i] === 0 条件判断下mount新child就行了
           if (j < 0 || i !== increasingNewIndexSequence[j]) {
             // j < 0 也就是increasingNewIndexSequence中的全部处理完了，剩下的都需要移动
             // i !== increasingNewIndexSequence[j] 也就是子序列不包含当前newChild的index，需要移动
@@ -2625,11 +2632,16 @@ export function invokeVNodeHook(
 // arr[newIndex - s2] = oldIndex + 1
 // 获取最长增长子序列的索引数组 [2,11,6,8,1] => [0,2,3] | [2,9,11,8,5,6] => [0,4,5]
 // 目的是尽可能多得找到不需要移动的dom，返回的result是这些不需要移动的dom的索引 newIndex - s2 的最长增长子序列
-// 时间复杂度为nlogn???
+// 贪心+二分查找，时间复杂度为nlogn
+// 优化：用p数组存放前一个值的正确索引，用于最后回溯正确索引值
 function getSequence(arr: number[]): number[] {
   // p数组用来存放arr中上一个比自身小的值的索引
+  // P[i]存放的是当前arr[i]的前一个值的正确索引
+  // 用于最后回溯
+  // 这里 p = [] 也是可以的，只对需要的index进行赋值，其余为undefined
   const p = arr.slice()
   // result数组是存储最长增长子序列的索引数组
+  // result走的是正常的贪心+二分查找逻辑，最后result的长度是正确的，但是内部值是错误的
   const result = [0]
   let i, j, u, v, c
   const len = arr.length
@@ -2637,6 +2649,7 @@ function getSequence(arr: number[]): number[] {
   for (i = 0; i < len; i++) {
     const arrI = arr[i]
     // 不为0，表示可以复用
+    // 为0，表示不存在老child，自然也不需要移动，这里不用做处理
     if (arrI !== 0) {
       // j是子序列索引最后一项
       j = result[result.length - 1]
@@ -2664,6 +2677,7 @@ function getSequence(arr: number[]): number[] {
       }
       // u指向的是arr中第一个比当前arrI大的索引
       if (arrI < arr[result[u]]) {
+        // 如果u === 0，说明当前arrI是最小的，后续回溯的时候用不到p[i]的值
         if (u > 0) {
           // p[i]指向的是arr中的最后一个比当前arrI小的索引
           p[i] = result[u - 1]
@@ -2672,6 +2686,7 @@ function getSequence(arr: number[]): number[] {
         // result[u]存储的永远是 遍历至此 arr中最小的一个的index，所以在之后循环中的二分查找会有影响，使得result数组永远是最长增长子数列的小数组
         // 小数组才能在后续循环中继续增加子序列的长度，大数组则会出错
         // [2,9,11,8,5,6] => result一定为小数组[0,4,5]，不会是大数组[0,1,2]
+        // 这里做贪心处理，为了得到最优解，会添加错误的结果，但是result的长度一定是对的，所以需要p数组来记录正确的索引
         result[u] = i
       }
     }
@@ -2681,6 +2696,9 @@ function getSequence(arr: number[]): number[] {
   // result数组的内容为 arr中比arr[resultIndex]小的所有值的index中的最大值，也就是arr中 最后一个比arr[resultIndex]小 的index
   // result会有拦截，也就是只会更新第一个大的位置的index，因为result是最大增大子序列的索引数组，后面的不需要更新，一定是比前面的大
   // [2,9,11,8,5,6] => result [0,4,5]  p [2,0,1,0,0,4] => 最终的result [0,4,5]
+  // 回溯从result最后开始，result的最后一个索引一定是正确的
+  // 然后每次根据后一个索引从p数组中拿出它前一个的正确索引，重新赋值到result的前一个位置
+  // 最后result就变成了正确索引数组
   u = result.length
   v = result[u - 1]
   while (u-- > 0) {
